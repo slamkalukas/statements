@@ -1,12 +1,14 @@
+import mimetypes
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit
+from .. import audit, storage
 from ..database import get_db
-from ..deps import get_current_user, get_period
+from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, Period, StatementLine, User
-from ..schemas import PeriodCreate, PeriodOut
+from ..schemas import PeriodCreate, PeriodOut, SyncResult
 
 router = APIRouter(prefix="/api/periods", tags=["periods"])
 
@@ -92,6 +94,51 @@ def reopen_period(
     db.commit()
     db.refresh(period)
     return serialize(period)
+
+
+@router.post("/{period_id}/sync", response_model=SyncResult)
+def sync_from_folder(
+    period_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Scan the month's folder on disk and register any files not yet in the DB.
+    New files are imported as kind='other' so they appear in the Documents list
+    and can be re-typed / linked to statement lines from the UI."""
+    period = get_period(db, period_id)
+    assert_period_open(period)
+
+    folder = storage.DOCUMENTS_DIR / f"{period.year:04d}" / f"{period.month:02d}"
+    if not folder.is_dir():
+        return SyncResult(scanned=0, imported=0, skipped=0)
+
+    # Relative paths already tracked for this period.
+    existing: set[str] = set(
+        db.scalars(select(Document.stored_path).where(Document.period_id == period_id))
+    )
+
+    files = [f for f in folder.iterdir() if f.is_file()]
+    imported = 0
+    for f in files:
+        rel = f.relative_to(storage.DOCUMENTS_DIR).as_posix()
+        if rel in existing:
+            continue
+        mime, _ = mimetypes.guess_type(f.name)
+        db.add(Document(
+            period_id=period_id,
+            kind="other",
+            original_filename=f.name,
+            stored_path=rel,
+            content_type=mime or "application/octet-stream",
+            size_bytes=f.stat().st_size,
+        ))
+        imported += 1
+
+    if imported:
+        audit.record(db, user, "create", "document", None, f"sync {imported} files from disk")
+        db.commit()
+
+    return SyncResult(scanned=len(files), imported=imported, skipped=len(files) - imported)
 
 
 @router.delete("/{period_id}", status_code=204)

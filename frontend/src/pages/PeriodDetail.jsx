@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Download,
   FileText,
+  FolderSync,
   Link2,
   Lock,
   LockOpen,
@@ -429,6 +430,26 @@ function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete 
   const grouped = KINDS.map((kind) => ({ kind, items: docs.filter((d) => d.kind === kind) })).filter(
     (g) => g.items.length > 0
   );
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
+  async function syncFolder() {
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      const r = await api.post(`/periods/${period.id}/sync`, {});
+      if (r.imported === 0) {
+        setSyncMsg(`All ${r.scanned} file${r.scanned === 1 ? "" : "s"} already tracked.`);
+      } else {
+        setSyncMsg(`Synced ${r.imported} new file${r.imported === 1 ? "" : "s"} (${r.skipped} already tracked).`);
+        onUploaded();
+      }
+    } catch (err) {
+      setSyncMsg(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <div className="doc-grid">
@@ -437,6 +458,20 @@ function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete 
         <p className="page-sub" style={{ marginBottom: 16 }}>
           Stored on the host folder under {period.year}/{String(period.month).padStart(2, "0")}/.
         </p>
+        {!closed && (
+          <div style={{ marginBottom: 16 }}>
+            <button
+              className="btn btn-secondary"
+              onClick={syncFolder}
+              disabled={closed || syncing}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              {syncing ? <Spinner /> : <FolderSync size={15} />}
+              Sync from folder
+            </button>
+            {syncMsg && <p className="doc-meta" style={{ marginTop: 6 }}>{syncMsg}</p>}
+          </div>
+        )}
         <UploadForm periodId={period.id} disabled={closed} onUploaded={onUploaded} />
       </div>
 

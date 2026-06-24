@@ -111,6 +111,13 @@ class StorageUpdate(BaseModel):
     host_path: str = Field(max_length=512)
 
 
+# ---- Folder sync ----
+class SyncResult(BaseModel):
+    scanned: int    # total files found on disk
+    imported: int   # newly registered in the DB
+    skipped: int    # already tracked, left alone
+
+
 # ---- Dashboard ----
 class DashboardSummary(BaseModel):
     periods_tracked: int
