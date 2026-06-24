@@ -72,6 +72,7 @@ class DocumentOut(ORMModel):
     note: str
     uploaded_at: datetime | None = None
     linked_line_count: int = 0  # how many statement lines this document supports
+    extracted_via: str | None = None  # "text" | "ocr" | None — how amount/date were read
 
 
 # ---- Statement lines / reconciliation ----
@@ -114,6 +115,7 @@ class StorageUpdate(BaseModel):
 # ---- Auto-match (scan documents, pair to transactions) ----
 class AutoMatchResult(BaseModel):
     scanned: int      # documents read for an amount this run
+    ocr: int          # of those, how many needed OCR (scanned/image-only)
     matched: int      # transactions newly paired to a document
     ambiguous: int    # amounts where several docs/payments collide (left for you)
     still_missing: int  # outgoing payments still without a document

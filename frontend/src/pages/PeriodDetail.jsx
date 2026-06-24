@@ -65,10 +65,11 @@ export default function PeriodDetail() {
 
   async function autoMatch() {
     const r = await api.post(`/periods/${id}/auto-match`, {});
+    const ocr = r.ocr > 0 ? ` (${r.ocr} via OCR)` : "";
     if (r.matched > 0) {
-      flash(`Paired ${r.matched} payment${r.matched === 1 ? "" : "s"}${r.ambiguous ? `, ${r.ambiguous} ambiguous` : ""} · ${r.still_missing} still missing`);
+      flash(`Paired ${r.matched} payment${r.matched === 1 ? "" : "s"}${r.ambiguous ? `, ${r.ambiguous} ambiguous` : ""} · ${r.still_missing} still missing${ocr}`);
     } else if (r.scanned > 0) {
-      flash(`Scanned ${r.scanned} document${r.scanned === 1 ? "" : "s"} — no new unambiguous matches`);
+      flash(`Scanned ${r.scanned} document${r.scanned === 1 ? "" : "s"}${ocr} — no new unambiguous matches`);
     } else {
       flash("Nothing to match — no unpaired documents found");
     }
@@ -190,7 +191,7 @@ export default function PeriodDetail() {
         period={period}
         docs={docs}
         closed={closed}
-        onUploaded={() => { flash("Uploaded"); load(); }}
+        onUploaded={(doc) => { flash(uploadMessage(doc)); load(); }}
         onDownload={(docId, name) => downloadDocument(docId, name)}
         onDelete={removeDoc}
       />
@@ -215,6 +216,29 @@ export default function PeriodDetail() {
 
       <Toast message={toast} />
     </>
+  );
+}
+
+function uploadMessage(doc) {
+  if (doc && doc.extracted_via && doc.amount != null) {
+    const how = doc.extracted_via === "ocr" ? "OCR" : "the file";
+    return `Uploaded · read ${formatAmount(doc.amount)} via ${how}`;
+  }
+  return "Uploaded";
+}
+
+function ExtractBadge({ via }) {
+  if (!via) return null;
+  // How the amount/date were read off the file.
+  const ocr = via === "ocr";
+  return (
+    <span
+      className="tag"
+      title={ocr ? "Amount/date read by OCR (scanned document)" : "Amount/date read from the file's text"}
+      style={{ marginLeft: 8, fontSize: 11, padding: "1px 7px", verticalAlign: "middle" }}
+    >
+      <ScanSearch size={11} /> {ocr ? "OCR" : "auto-read"}
+    </span>
   );
 }
 
@@ -505,7 +529,10 @@ function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete 
                 <div key={d.id} className="doc-row">
                   <div className="doc-icon"><FileText size={18} /></div>
                   <div className="doc-main">
-                    <div className="doc-name">{d.original_filename}</div>
+                    <div className="doc-name">
+                      {d.original_filename}
+                      <ExtractBadge via={d.extracted_via} />
+                    </div>
                     <div className="doc-meta">
                       {formatBytes(d.size_bytes)}
                       {d.doc_date ? ` · ${d.doc_date}` : ""}
@@ -559,13 +586,13 @@ function UploadForm({ periodId, disabled, onUploaded }) {
     if (docDate) fd.append("doc_date", docDate);
     if (amount) fd.append("amount", amount);
     try {
-      await api.postForm(`/periods/${periodId}/documents`, fd);
+      const doc = await api.postForm(`/periods/${periodId}/documents`, fd);
       setNote("");
       setDocDate("");
       setAmount("");
       setFileName("");
       if (fileRef.current) fileRef.current.value = "";
-      onUploaded();
+      onUploaded(doc);
     } catch (err) {
       setError(err.message);
     } finally {

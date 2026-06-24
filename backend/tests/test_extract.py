@@ -82,6 +82,18 @@ def test_scan_unreadable_pdf_returns_none():
     assert amount is None and doc_date is None
 
 
+def test_scan_reports_text_method_for_text_file():
+    r = extract.scan(b"Spolu k uhrade 12,00 EUR", "bill.txt", "text/plain")
+    assert r.amount == Decimal("12.00")
+    assert r.method == "text"
+    assert r.chars > 0
+
+
+def test_scan_reports_no_method_when_unreadable():
+    r = extract.scan(b"not a pdf", "x.pdf", "application/pdf")
+    assert r.method is None and r.amount is None
+
+
 def _make_text_image(text: str) -> bytes:
     """A clear, high-contrast PNG with `text` rendered large — OCR-friendly."""
     PIL = pytest.importorskip("PIL")  # noqa: F841

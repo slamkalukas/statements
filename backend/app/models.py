@@ -98,6 +98,9 @@ class Document(Base):
     doc_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     note: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    # How amount/date were read off the file, if at all: "text" (embedded text
+    # layer), "ocr" (Tesseract on a scan), or NULL (entered by hand / not read).
+    extracted_via: Mapped[str | None] = mapped_column(String(16), nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     period: Mapped["Period"] = relationship(back_populates="documents")

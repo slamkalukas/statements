@@ -15,6 +15,7 @@ import re
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import NamedTuple
 
 # OCR is opt-out and best-effort. It only runs when the tesseract binary and the
 # Python deps are present; otherwise we silently fall back to text-layer only.
@@ -137,28 +138,33 @@ def _pdf_text_layer(data: bytes) -> str:
         return ""
 
 
-def extract_text(data: bytes, filename: str = "", content_type: str = "") -> str:
-    """Best-effort plain text from a document. Empty string if we can't read it.
-
-    For PDFs, the embedded text layer is used when present; if it's effectively
-    empty (a scanned page) and OCR is available, the pages are OCR'd instead.
-    Uploaded images go straight to OCR.
-    """
+def extract_text_with_method(
+    data: bytes, filename: str = "", content_type: str = ""
+) -> tuple[str, str | None]:
+    """Plain text plus how it was read: "text" (embedded text layer / text file),
+    "ocr" (Tesseract on a scanned PDF or image), or None when nothing was read."""
     if _is_pdf(filename, content_type):
         text = _pdf_text_layer(data)
         if len(text.strip()) < _TEXT_LAYER_MIN_CHARS and ocr_available():
             ocr_text = _ocr_pdf(data)
             if ocr_text.strip():
-                return ocr_text
-        return text
+                return ocr_text, "ocr"
+        return text, ("text" if text.strip() else None)
     if _is_text(filename, content_type):
         try:
-            return data.decode("utf-8", errors="replace")
+            text = data.decode("utf-8", errors="replace")
+            return text, ("text" if text.strip() else None)
         except Exception:
-            return ""
+            return "", None
     if _is_image(filename, content_type) and ocr_available():
-        return _ocr_image_bytes(data)
-    return ""
+        text = _ocr_image_bytes(data)
+        return text, ("ocr" if text.strip() else None)
+    return "", None
+
+
+def extract_text(data: bytes, filename: str = "", content_type: str = "") -> str:
+    """Best-effort plain text from a document. Empty string if we can't read it."""
+    return extract_text_with_method(data, filename, content_type)[0]
 
 
 def _norm(s: str) -> str:
@@ -242,9 +248,28 @@ def extract_date(text: str) -> date | None:
     return _parse_date_match(m) if m else None
 
 
+class ScanResult(NamedTuple):
+    amount: Decimal | None
+    date: date | None
+    method: str | None  # "text" | "ocr" | None — how the document was read
+    chars: int          # length of the extracted text (0 if unreadable)
+
+
+def scan(data: bytes, filename: str = "", content_type: str = "") -> ScanResult:
+    """Read a document and report what we found and how we read it."""
+    text, method = extract_text_with_method(data, filename, content_type)
+    return ScanResult(
+        amount=extract_amount(text),
+        date=extract_date(text),
+        method=method,
+        chars=len(text),
+    )
+
+
 def scan_document(
     data: bytes, filename: str = "", content_type: str = ""
 ) -> tuple[Decimal | None, date | None]:
-    """Extract (amount, date) from a document. Either may be None."""
-    text = extract_text(data, filename, content_type)
-    return extract_amount(text), extract_date(text)
+    """Extract (amount, date) from a document. Either may be None. (Use scan()
+    for the richer result including how it was read.)"""
+    r = scan(data, filename, content_type)
+    return r.amount, r.date

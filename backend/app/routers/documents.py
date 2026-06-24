@@ -28,6 +28,7 @@ def serialize(d: Document) -> DocumentOut:
         note=d.note,
         uploaded_at=d.uploaded_at,
         linked_line_count=len(d.lines),
+        extracted_via=d.extracted_via,
     )
 
 
@@ -101,18 +102,20 @@ def upload_document(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
 
-    # Scan the file (PDF/text) for its total and date when not given by hand, so
-    # uploaded invoices can be paired to a transaction without manual data entry.
+    # Scan the file (PDF/text/image) for its total and date when not given by
+    # hand, so uploaded invoices can be paired without manual data entry.
+    extracted_via = None
     if parsed_amount is None or parsed_date is None:
         try:
             data = storage.resolve(rel_path).read_bytes()
-            scanned_amount, scanned_date = extract.scan_document(
-                data, original, file.content_type or ""
-            )
-            if parsed_amount is None and scanned_amount is not None:
-                parsed_amount = scanned_amount.quantize(Decimal("0.01"))
-            if parsed_date is None and scanned_date is not None:
-                parsed_date = scanned_date
+            result = extract.scan(data, original, file.content_type or "")
+            if parsed_amount is None and result.amount is not None:
+                parsed_amount = result.amount.quantize(Decimal("0.01"))
+            if parsed_date is None and result.date is not None:
+                parsed_date = result.date
+            # Record how we read it, but only when it actually yielded something.
+            if result.method and (result.amount is not None or result.date is not None):
+                extracted_via = result.method
         except Exception:
             pass  # extraction is best-effort; never block an upload
 
@@ -126,6 +129,7 @@ def upload_document(
         doc_date=parsed_date,
         amount=parsed_amount,
         note=note.strip()[:512],
+        extracted_via=extracted_via,
     )
     db.add(doc)
     db.flush()

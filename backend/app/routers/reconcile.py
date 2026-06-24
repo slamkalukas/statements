@@ -167,19 +167,24 @@ def auto_match(
 
     # Read amounts for documents that don't have one yet (e.g. synced files).
     scanned = 0
+    ocr_used = 0
     for d in unlinked_docs:
         if d.amount is not None:
             continue
         try:
             data = storage.resolve(d.stored_path).read_bytes()
-            amount, doc_date = extract.scan_document(data, d.original_filename, d.content_type)
+            result = extract.scan(data, d.original_filename, d.content_type)
         except Exception:
-            amount, doc_date = None, None
+            result = extract.ScanResult(None, None, None, 0)
         scanned += 1
-        if amount is not None:
-            d.amount = amount.quantize(Decimal("0.01"))
-        if doc_date is not None and d.doc_date is None:
-            d.doc_date = doc_date
+        if result.method == "ocr":
+            ocr_used += 1
+        if result.amount is not None:
+            d.amount = result.amount.quantize(Decimal("0.01"))
+        if result.date is not None and d.doc_date is None:
+            d.doc_date = result.date
+        if result.method and (result.amount is not None or result.date is not None):
+            d.extracted_via = result.method
 
     # Group unpaired payments and unpaired documents by amount.
     missing_lines = db.scalars(
@@ -220,7 +225,8 @@ def auto_match(
 
     still_missing = sum(len(lns) for lns in lines_by_amount.values()) - matched
     return AutoMatchResult(
-        scanned=scanned, matched=matched, ambiguous=ambiguous, still_missing=still_missing
+        scanned=scanned, ocr=ocr_used, matched=matched,
+        ambiguous=ambiguous, still_missing=still_missing,
     )
 
 

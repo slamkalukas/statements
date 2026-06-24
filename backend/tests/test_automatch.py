@@ -53,6 +53,20 @@ def test_upload_with_amount_auto_links_unique_payment(client, auth_headers, stor
     assert rent["document_id"] is not None  # auto-paired on upload
 
 
+def test_upload_reports_text_extraction_method(client, auth_headers, storage):
+    pid = _period(client, auth_headers, 2026, 11)
+    # A text "invoice" with no amount entered — the app reads it from the file.
+    res = client.post(
+        f"/api/periods/{pid}/documents",
+        data={"kind": "invoice"},
+        files={"file": ("bill.txt", b"Spolu k uhrade 42,00 EUR", "text/plain")},
+        headers=auth_headers,
+    )
+    body = res.json()
+    assert body["amount"] == 42.0
+    assert body["extracted_via"] == "text"
+
+
 def test_upload_with_amount_does_not_link_when_ambiguous(client, auth_headers, storage):
     pid = _period(client, auth_headers, 2026, 7)
     # Two payments of the same amount: a single invoice can't be auto-assigned.
