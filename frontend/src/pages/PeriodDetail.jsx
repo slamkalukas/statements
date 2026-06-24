@@ -63,8 +63,8 @@ export default function PeriodDetail() {
     load();
   }
 
-  async function autoMatch() {
-    const r = await api.post(`/periods/${id}/auto-match`, {});
+  async function autoMatch(rescan = false) {
+    const r = await api.post(`/periods/${id}/auto-match`, rescan ? { rescan: true } : {});
     const ocr = r.ocr > 0 ? ` (${r.ocr} via OCR)` : "";
     if (r.matched > 0) {
       flash(`Paired ${r.matched} payment${r.matched === 1 ? "" : "s"}${r.ambiguous ? `, ${r.ambiguous} ambiguous` : ""} · ${r.still_missing} still missing${ocr}`);
@@ -159,8 +159,13 @@ export default function PeriodDetail() {
             {!closed && (
               <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
                 {missing.length > 0 && (
-                  <button className="btn btn-accent btn-sm" onClick={autoMatch} title="Scan unpaired documents and pair them to payments by amount">
+                  <button className="btn btn-accent btn-sm" onClick={() => autoMatch(false)} title="Read unpaired documents (skipping ones already read) and pair them to payments by amount">
                     <ScanSearch size={14} /> Scan &amp; auto-match
+                  </button>
+                )}
+                {missing.length > 0 && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => autoMatch(true)} title="Re-read every unpaired document, even ones already read — fixes wrong or missing amounts on files imported earlier">
+                    <ScanSearch size={14} /> Re-scan all
                   </button>
                 )}
                 <StatementImport

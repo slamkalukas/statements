@@ -42,6 +42,19 @@ def test_keyword_matches_without_diacritics():
     assert extract.extract_amount(text) == Decimal("120.00")
 
 
+def test_zero_total_is_ignored_for_prepaid_invoice():
+    # A prepaid invoice shows "amount due 0,00" but the real total is non-zero.
+    text = "Total 119,76 EUR\nAmount Due (EUR) 0,00 EUR"
+    assert extract.extract_amount(text) == Decimal("119.76")
+    # Even if only the keyword line is zero, fall back to the non-zero figure.
+    text2 = "Cena 737,24 EUR\nCelkom k uhrade: 0,00 EUR"
+    assert extract.extract_amount(text2) == Decimal("737.24")
+
+
+def test_all_zero_yields_none():
+    assert extract.extract_amount("Celkom k uhrade 0,00 EUR") is None
+
+
 def test_date_prefers_issue_hint():
     text = "Splatnosť 30.07.2026\nDátum vystavenia 24.06.2026"
     assert extract.extract_date(text) == date(2026, 6, 24)

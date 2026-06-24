@@ -193,7 +193,11 @@ def _parse_money(token: str) -> Decimal | None:
 def extract_amount(text: str) -> Decimal | None:
     """The document's total. Prefers an amount sitting on a line that names a
     total ("k úhrade", "total", ...); otherwise falls back to the largest amount
-    in the document, which for an invoice is almost always the grand total."""
+    in the document, which for an invoice is almost always the grand total.
+
+    Zero amounts are ignored: a prepaid invoice shows "Amount due 0,00" / "Celkom
+    k úhrade 0,00", but the figure we want to reconcile is the non-zero total.
+    """
     if not text:
         return None
     lines = text.splitlines()
@@ -206,16 +210,16 @@ def extract_amount(text: str) -> Decimal | None:
             if nkw in low:
                 for tok in _MONEY_RE.findall(raw):
                     val = _parse_money(tok)
-                    if val is not None and (best is None or val > best):
+                    if val is not None and val > 0 and (best is None or val > best):
                         best = val
         if best is not None:
             return best
 
-    # Fallback: the largest money figure anywhere.
+    # Fallback: the largest (non-zero) money figure anywhere.
     best = None
     for tok in _MONEY_RE.findall(text):
         val = _parse_money(tok)
-        if val is not None and (best is None or val > best):
+        if val is not None and val > 0 and (best is None or val > best):
             best = val
     return best
 

@@ -9,6 +9,7 @@ from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, StatementLine, User
 from ..schemas import (
+    AutoMatchRequest,
     AutoMatchResult,
     LinkRequest,
     StatementImportResult,
@@ -145,6 +146,7 @@ async def import_statement(
 @router.post("/periods/{period_id}/auto-match", response_model=AutoMatchResult)
 def auto_match(
     period_id: int,
+    body: AutoMatchRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -152,9 +154,13 @@ def auto_match(
     payments by amount. Pairing is only applied where it's unambiguous — exactly
     one unpaired payment and one unpaired document share an amount — so colliding
     same-amount items are left for you to resolve by hand.
+
+    With rescan=true, already-read documents are re-read too, so improved
+    extraction reaches files imported earlier.
     """
     period = get_period(db, period_id)
     assert_period_open(period)
+    rescan = bool(body and body.rescan)
 
     # Documents in this month not yet linked to any line.
     docs = db.scalars(
@@ -164,7 +170,7 @@ def auto_match(
     ).all()
     unlinked_docs = [d for d in docs if not d.lines]
 
-    scanned, ocr_used = matching.scan_documents(db, unlinked_docs)
+    scanned, ocr_used = matching.scan_documents(db, unlinked_docs, force=rescan)
     matched, ambiguous, still_missing = matching.auto_pair(db, period_id)
 
     if scanned or matched:

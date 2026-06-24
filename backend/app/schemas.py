@@ -113,6 +113,10 @@ class StorageUpdate(BaseModel):
 
 
 # ---- Auto-match (scan documents, pair to transactions) ----
+class AutoMatchRequest(BaseModel):
+    rescan: bool = False  # re-read every document, even ones that already have an amount
+
+
 class AutoMatchResult(BaseModel):
     scanned: int      # documents read for an amount this run
     ocr: int          # of those, how many needed OCR (scanned/image-only)

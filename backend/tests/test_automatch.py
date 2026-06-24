@@ -113,6 +113,29 @@ def test_sync_scans_and_pairs_file_from_disk(client, auth_headers, storage):
     assert bill["extracted_via"] == "text"
 
 
+def test_rescan_corrects_an_existing_amount(client, auth_headers, storage):
+    """rescan=true re-reads a document that already has an amount, so improved
+    extraction (or a corrected file) reaches files imported earlier."""
+    pid = _period(client, auth_headers, 2026, 12)
+    # Upload with a wrong amount entered by hand; the file says 50,00.
+    client.post(
+        f"/api/periods/{pid}/documents",
+        data={"kind": "invoice", "amount": "9.99"},
+        files={"file": ("bill.txt", b"Spolu k uhrade 50,00 EUR", "text/plain")},
+        headers=auth_headers,
+    )
+    # A normal auto-match leaves the existing amount untouched.
+    client.post(f"/api/periods/{pid}/auto-match", json={}, headers=auth_headers)
+    doc = client.get(f"/api/periods/{pid}/documents", headers=auth_headers).json()[0]
+    assert doc["amount"] == 9.99
+
+    # rescan re-reads it and replaces the amount with what the file says.
+    res = client.post(f"/api/periods/{pid}/auto-match", json={"rescan": True}, headers=auth_headers)
+    assert res.json()["scanned"] == 1
+    doc = client.get(f"/api/periods/{pid}/documents", headers=auth_headers).json()[0]
+    assert doc["amount"] == 50.0
+
+
 def test_auto_match_still_works_after_sync(client, auth_headers, storage):
     """Auto-match remains a no-op safety net once sync already paired everything."""
     pid = _period(client, auth_headers, 2026, 9)

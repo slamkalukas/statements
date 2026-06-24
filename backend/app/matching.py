@@ -12,16 +12,21 @@ from . import extract, storage
 from .models import Document, StatementLine
 
 
-def scan_documents(db: Session, docs: list[Document]) -> tuple[int, int]:
-    """Read amount/date for the given documents that don't have an amount yet,
-    via text layer or OCR. Sets amount/doc_date/extracted_via in place.
+def scan_documents(db: Session, docs: list[Document], force: bool = False) -> tuple[int, int]:
+    """Read amount/date for the given documents via text layer or OCR, and set
+    amount/doc_date/extracted_via in place.
+
+    By default only documents with no amount yet are read. With force=True every
+    document is re-read (e.g. to apply improved extraction to already-imported
+    files); a re-read never wipes an existing amount — it only replaces it when
+    the new read finds one.
 
     Returns (scanned, ocr_used) — how many were read and how many needed OCR.
     """
     scanned = 0
     ocr_used = 0
     for d in docs:
-        if d.amount is not None:
+        if d.amount is not None and not force:
             continue
         try:
             data = storage.resolve(d.stored_path).read_bytes()
@@ -33,7 +38,7 @@ def scan_documents(db: Session, docs: list[Document]) -> tuple[int, int]:
             ocr_used += 1
         if result.amount is not None:
             d.amount = result.amount.quantize(Decimal("0.01"))
-        if result.date is not None and d.doc_date is None:
+        if result.date is not None and (d.doc_date is None or force):
             d.doc_date = result.date
         if result.method and (result.amount is not None or result.date is not None):
             d.extracted_via = result.method
