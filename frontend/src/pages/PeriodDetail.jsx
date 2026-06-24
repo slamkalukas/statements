@@ -8,6 +8,7 @@ import {
   Link2,
   Lock,
   LockOpen,
+  ScanSearch,
   Trash2,
   Unlink,
   Upload,
@@ -59,6 +60,18 @@ export default function PeriodDetail() {
   async function unlink(line) {
     await api.post(`/lines/${line.id}/unlink`);
     flash("Unlinked");
+    load();
+  }
+
+  async function autoMatch() {
+    const r = await api.post(`/periods/${id}/auto-match`, {});
+    if (r.matched > 0) {
+      flash(`Paired ${r.matched} payment${r.matched === 1 ? "" : "s"}${r.ambiguous ? `, ${r.ambiguous} ambiguous` : ""} · ${r.still_missing} still missing`);
+    } else if (r.scanned > 0) {
+      flash(`Scanned ${r.scanned} document${r.scanned === 1 ? "" : "s"} — no new unambiguous matches`);
+    } else {
+      flash("Nothing to match — no unpaired documents found");
+    }
     load();
   }
 
@@ -144,6 +157,11 @@ export default function PeriodDetail() {
             />
             {!closed && (
               <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+                {missing.length > 0 && (
+                  <button className="btn btn-accent btn-sm" onClick={autoMatch} title="Scan unpaired documents and pair them to payments by amount">
+                    <ScanSearch size={14} /> Scan &amp; auto-match
+                  </button>
+                )}
                 <StatementImport
                   periodId={period.id}
                   disabled={closed}

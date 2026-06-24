@@ -111,6 +111,14 @@ class StorageUpdate(BaseModel):
     host_path: str = Field(max_length=512)
 
 
+# ---- Auto-match (scan documents, pair to transactions) ----
+class AutoMatchResult(BaseModel):
+    scanned: int      # documents read for an amount this run
+    matched: int      # transactions newly paired to a document
+    ambiguous: int    # amounts where several docs/payments collide (left for you)
+    still_missing: int  # outgoing payments still without a document
+
+
 # ---- Folder sync ----
 class SyncResult(BaseModel):
     scanned: int    # total files found on disk

@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, storage
+from .. import audit, extract, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, StatementLine, User
@@ -101,6 +101,21 @@ def upload_document(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
 
+    # Scan the file (PDF/text) for its total and date when not given by hand, so
+    # uploaded invoices can be paired to a transaction without manual data entry.
+    if parsed_amount is None or parsed_date is None:
+        try:
+            data = storage.resolve(rel_path).read_bytes()
+            scanned_amount, scanned_date = extract.scan_document(
+                data, original, file.content_type or ""
+            )
+            if parsed_amount is None and scanned_amount is not None:
+                parsed_amount = scanned_amount.quantize(Decimal("0.01"))
+            if parsed_date is None and scanned_date is not None:
+                parsed_date = scanned_date
+        except Exception:
+            pass  # extraction is best-effort; never block an upload
+
     doc = Document(
         period_id=period.id,
         kind=kind,
@@ -116,6 +131,18 @@ def upload_document(
     db.flush()
     if line is not None:
         line.document_id = doc.id  # link on upload (the "attach to this payment" flow)
+    elif doc.amount is not None and kind != "bank_statement":
+        # No explicit target: auto-pair to an outgoing payment of the same amount,
+        # but only when exactly one such payment is still missing a document.
+        matches = db.scalars(
+            select(StatementLine).where(
+                StatementLine.period_id == period.id,
+                StatementLine.document_id.is_(None),
+                StatementLine.amount == -doc.amount,
+            )
+        ).all()
+        if len(matches) == 1:
+            matches[0].document_id = doc.id
     audit.record(db, user, "create", "document", doc.id, f"{kind}: {original}")
     db.commit()
     db.refresh(doc)

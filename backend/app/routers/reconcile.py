@@ -1,14 +1,20 @@
+from collections import defaultdict
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, storage
+from .. import audit, extract, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, StatementLine, User
-from ..schemas import LinkRequest, StatementImportResult, StatementLineOut
+from ..schemas import (
+    AutoMatchResult,
+    LinkRequest,
+    StatementImportResult,
+    StatementLineOut,
+)
 from ..statements import parse_statement
 
 router = APIRouter(prefix="/api", tags=["reconcile"])
@@ -134,6 +140,87 @@ async def import_statement(
     db.commit()
     return StatementImportResult(
         format=fmt, parsed=len(rows), imported=imported, duplicates=duplicates, outgoing=outgoing
+    )
+
+
+@router.post("/periods/{period_id}/auto-match", response_model=AutoMatchResult)
+def auto_match(
+    period_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Scan unpaired documents for their total, then pair them to outgoing
+    payments by amount. Pairing is only applied where it's unambiguous — exactly
+    one unpaired payment and one unpaired document share an amount — so colliding
+    same-amount items are left for you to resolve by hand.
+    """
+    period = get_period(db, period_id)
+    assert_period_open(period)
+
+    # Documents in this month not yet linked to any line.
+    docs = db.scalars(
+        select(Document)
+        .where(Document.period_id == period_id, Document.kind != "bank_statement")
+        .options(selectinload(Document.lines))
+    ).all()
+    unlinked_docs = [d for d in docs if not d.lines]
+
+    # Read amounts for documents that don't have one yet (e.g. synced files).
+    scanned = 0
+    for d in unlinked_docs:
+        if d.amount is not None:
+            continue
+        try:
+            data = storage.resolve(d.stored_path).read_bytes()
+            amount, doc_date = extract.scan_document(data, d.original_filename, d.content_type)
+        except Exception:
+            amount, doc_date = None, None
+        scanned += 1
+        if amount is not None:
+            d.amount = amount.quantize(Decimal("0.01"))
+        if doc_date is not None and d.doc_date is None:
+            d.doc_date = doc_date
+
+    # Group unpaired payments and unpaired documents by amount.
+    missing_lines = db.scalars(
+        select(StatementLine).where(
+            StatementLine.period_id == period_id,
+            StatementLine.document_id.is_(None),
+            StatementLine.amount < 0,
+        )
+    ).all()
+
+    lines_by_amount: dict[Decimal, list[StatementLine]] = defaultdict(list)
+    for ln in missing_lines:
+        lines_by_amount[Decimal(ln.amount)].append(ln)
+
+    docs_by_amount: dict[Decimal, list[Document]] = defaultdict(list)
+    for d in unlinked_docs:
+        if d.amount is not None:
+            docs_by_amount[Decimal(d.amount)].append(d)
+
+    matched = 0
+    ambiguous = 0
+    for amount, lns in lines_by_amount.items():
+        cands = docs_by_amount.get(-amount, [])  # doc amount is positive, line negative
+        if not cands:
+            continue
+        if len(lns) == 1 and len(cands) == 1:
+            lns[0].document_id = cands[0].id
+            matched += 1
+        else:
+            ambiguous += len(lns)
+
+    if scanned or matched:
+        audit.record(
+            db, user, "update", "statement", period_id,
+            f"auto-match: scanned {scanned}, paired {matched}",
+        )
+        db.commit()
+
+    still_missing = sum(len(lns) for lns in lines_by_amount.values()) - matched
+    return AutoMatchResult(
+        scanned=scanned, matched=matched, ambiguous=ambiguous, still_missing=still_missing
     )
 
 
