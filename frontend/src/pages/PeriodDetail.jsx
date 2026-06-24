@@ -483,7 +483,9 @@ function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete 
       if (r.imported === 0) {
         setSyncMsg(`All ${r.scanned} file${r.scanned === 1 ? "" : "s"} already tracked.`);
       } else {
-        setSyncMsg(`Synced ${r.imported} new file${r.imported === 1 ? "" : "s"} (${r.skipped} already tracked).`);
+        const ocr = r.ocr > 0 ? `, ${r.ocr} via OCR` : "";
+        const paired = r.matched > 0 ? ` · paired ${r.matched} payment${r.matched === 1 ? "" : "s"}` : "";
+        setSyncMsg(`Synced ${r.imported} new file${r.imported === 1 ? "" : "s"}${ocr}${paired}.`);
         onUploaded();
       }
     } catch (err) {

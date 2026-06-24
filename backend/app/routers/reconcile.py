@@ -1,11 +1,10 @@
-from collections import defaultdict
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, extract, storage
+from .. import audit, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, StatementLine, User
@@ -165,56 +164,8 @@ def auto_match(
     ).all()
     unlinked_docs = [d for d in docs if not d.lines]
 
-    # Read amounts for documents that don't have one yet (e.g. synced files).
-    scanned = 0
-    ocr_used = 0
-    for d in unlinked_docs:
-        if d.amount is not None:
-            continue
-        try:
-            data = storage.resolve(d.stored_path).read_bytes()
-            result = extract.scan(data, d.original_filename, d.content_type)
-        except Exception:
-            result = extract.ScanResult(None, None, None, 0)
-        scanned += 1
-        if result.method == "ocr":
-            ocr_used += 1
-        if result.amount is not None:
-            d.amount = result.amount.quantize(Decimal("0.01"))
-        if result.date is not None and d.doc_date is None:
-            d.doc_date = result.date
-        if result.method and (result.amount is not None or result.date is not None):
-            d.extracted_via = result.method
-
-    # Group unpaired payments and unpaired documents by amount.
-    missing_lines = db.scalars(
-        select(StatementLine).where(
-            StatementLine.period_id == period_id,
-            StatementLine.document_id.is_(None),
-            StatementLine.amount < 0,
-        )
-    ).all()
-
-    lines_by_amount: dict[Decimal, list[StatementLine]] = defaultdict(list)
-    for ln in missing_lines:
-        lines_by_amount[Decimal(ln.amount)].append(ln)
-
-    docs_by_amount: dict[Decimal, list[Document]] = defaultdict(list)
-    for d in unlinked_docs:
-        if d.amount is not None:
-            docs_by_amount[Decimal(d.amount)].append(d)
-
-    matched = 0
-    ambiguous = 0
-    for amount, lns in lines_by_amount.items():
-        cands = docs_by_amount.get(-amount, [])  # doc amount is positive, line negative
-        if not cands:
-            continue
-        if len(lns) == 1 and len(cands) == 1:
-            lns[0].document_id = cands[0].id
-            matched += 1
-        else:
-            ambiguous += len(lns)
+    scanned, ocr_used = matching.scan_documents(db, unlinked_docs)
+    matched, ambiguous, still_missing = matching.auto_pair(db, period_id)
 
     if scanned or matched:
         audit.record(
@@ -223,7 +174,6 @@ def auto_match(
         )
         db.commit()
 
-    still_missing = sum(len(lns) for lns in lines_by_amount.values()) - matched
     return AutoMatchResult(
         scanned=scanned, ocr=ocr_used, matched=matched,
         ambiguous=ambiguous, still_missing=still_missing,

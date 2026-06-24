@@ -126,6 +126,8 @@ class SyncResult(BaseModel):
     scanned: int    # total files found on disk
     imported: int   # newly registered in the DB
     skipped: int    # already tracked, left alone
+    ocr: int = 0     # of the imported files, how many needed OCR
+    matched: int = 0  # payments auto-paired to the imported files
 
 
 # ---- Dashboard ----

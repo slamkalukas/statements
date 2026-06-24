@@ -83,9 +83,9 @@ def test_upload_with_amount_does_not_link_when_ambiguous(client, auth_headers, s
     assert all(l["document_id"] is None for l in lines)  # left for manual choice
 
 
-def test_auto_match_scans_synced_file_and_pairs(client, auth_headers, storage):
-    """A file dropped on disk (synced as kind=other, no amount) gets its total
-    read during auto-match and paired to the matching outgoing payment."""
+def test_sync_scans_and_pairs_file_from_disk(client, auth_headers, storage):
+    """A file dropped on disk is read and paired to the matching outgoing
+    payment by the sync itself — no separate auto-match click needed."""
     pid = _period(client, auth_headers, 2026, 8)
     js = json.dumps([
         {"amount": {"value": -1500, "precision": 2}, "booking": "2026-08-03", "reference": "Rent"},
@@ -94,22 +94,41 @@ def test_auto_match_scans_synced_file_and_pairs(client, auth_headers, storage):
                 files={"file": ("d.json", js, "application/octet-stream")},
                 headers=auth_headers)
 
-    # Drop a text "invoice" carrying the amount onto the host folder, then sync it
-    # in. Sync registers it with no amount, so upload-time auto-link never ran.
+    # Drop a text "invoice" carrying the amount onto the host folder, then sync.
     folder = storage.DOCUMENTS_DIR / "2026" / "08"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "bill.txt").write_text("Spolu k uhrade 15,00 EUR", encoding="utf-8")
     synced = client.post(f"/api/periods/{pid}/sync", headers=auth_headers).json()
     assert synced["imported"] == 1
+    assert synced["matched"] == 1  # read + paired during sync
 
-    # Before auto-match the payment is still missing.
-    assert _lines(client, auth_headers, pid)[0]["document_id"] is None
+    # The payment is already linked right after the sync.
+    line = _lines(client, auth_headers, pid)[0]
+    assert line["document_id"] is not None
 
-    res = client.post(f"/api/periods/{pid}/auto-match", json={}, headers=auth_headers)
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["scanned"] == 1
-    assert body["matched"] == 1
+    # The imported document records that its amount was read from the text layer.
+    docs = client.get(f"/api/periods/{pid}/documents", headers=auth_headers).json()
+    bill = next(d for d in docs if d["original_filename"] == "bill.txt")
+    assert bill["amount"] == 15.0
+    assert bill["extracted_via"] == "text"
+
+
+def test_auto_match_still_works_after_sync(client, auth_headers, storage):
+    """Auto-match remains a no-op safety net once sync already paired everything."""
+    pid = _period(client, auth_headers, 2026, 9)
+    js = json.dumps([
+        {"amount": {"value": -1500, "precision": 2}, "booking": "2026-09-03", "reference": "Rent"},
+    ]).encode()
+    client.post(f"/api/periods/{pid}/statement",
+                files={"file": ("d.json", js, "application/octet-stream")},
+                headers=auth_headers)
+    folder = storage.DOCUMENTS_DIR / "2026" / "09"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "bill.txt").write_text("Spolu k uhrade 15,00 EUR", encoding="utf-8")
+    client.post(f"/api/periods/{pid}/sync", headers=auth_headers)
+
+    body = client.post(f"/api/periods/{pid}/auto-match", json={}, headers=auth_headers).json()
+    # Already paired during sync, and its amount is set, so nothing left to do.
+    assert body["scanned"] == 0
+    assert body["matched"] == 0
     assert body["still_missing"] == 0
-
-    assert _lines(client, auth_headers, pid)[0]["document_id"] is not None

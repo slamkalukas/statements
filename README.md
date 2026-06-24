@@ -41,9 +41,10 @@ the browser only ever talks to one origin.
    month view lists payments with the **missing** ones first. Upload an invoice
    and the app **reads its total** (and date) and **auto-links the payment with
    the same amount** when the match is unambiguous; otherwise it suggests
-   candidates or you attach a file directly. "Sync from folder" pulls in files
-   dropped into the month folder, and **Scan & auto-match** reads and pairs them
-   in bulk. Incoming/transfer lines are ignored.
+   candidates or you attach a file directly. **Sync from folder** pulls in files
+   dropped into the month folder and reads + pairs each one in the same step;
+   **Scan & auto-match** does the same pass on demand for anything still unpaired.
+   Incoming/transfer lines are ignored.
    - Digital PDFs are read from their text layer; **scanned, image-only PDFs and
      photos are read with OCR** (Tesseract, Slovak + English). Disable with
      `OCR_ENABLED=0`, or change languages with `OCR_LANG` (must match an

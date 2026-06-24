@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, storage
+from .. import audit, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, Period, StatementLine, User
@@ -118,27 +118,41 @@ def sync_from_folder(
     )
 
     files = [f for f in folder.iterdir() if f.is_file()]
-    imported = 0
+    new_docs: list[Document] = []
     for f in files:
         rel = f.relative_to(storage.DOCUMENTS_DIR).as_posix()
         if rel in existing:
             continue
         mime, _ = mimetypes.guess_type(f.name)
-        db.add(Document(
+        doc = Document(
             period_id=period_id,
             kind="other",
             original_filename=f.name,
             stored_path=rel,
             content_type=mime or "application/octet-stream",
             size_bytes=f.stat().st_size,
-        ))
-        imported += 1
+        )
+        db.add(doc)
+        new_docs.append(doc)
 
-    if imported:
-        audit.record(db, user, "create", "document", None, f"sync {imported} files from disk")
+    imported = len(new_docs)
+    ocr_used = 0
+    matched = 0
+    if new_docs:
+        # Read each new file's total (text layer or OCR) and pair it to a payment
+        # right away, so dropping files in the folder needs no second step.
+        _, ocr_used = matching.scan_documents(db, new_docs)
+        matched, _ambiguous, _missing = matching.auto_pair(db, period_id)
+        audit.record(
+            db, user, "create", "document", None,
+            f"sync {imported} files from disk (paired {matched})",
+        )
         db.commit()
 
-    return SyncResult(scanned=len(files), imported=imported, skipped=len(files) - imported)
+    return SyncResult(
+        scanned=len(files), imported=imported, skipped=len(files) - imported,
+        ocr=ocr_used, matched=matched,
+    )
 
 
 @router.delete("/{period_id}", status_code=204)
