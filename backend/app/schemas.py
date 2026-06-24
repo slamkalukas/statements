@@ -107,6 +107,10 @@ class StorageInfo(BaseModel):
     max_upload_mb: int
 
 
+class StorageUpdate(BaseModel):
+    host_path: str = Field(max_length=512)
+
+
 # ---- Dashboard ----
 class DashboardSummary(BaseModel):
     periods_tracked: int

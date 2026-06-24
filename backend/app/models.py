@@ -105,6 +105,19 @@ class Document(Base):
     lines: Mapped[list["StatementLine"]] = relationship(back_populates="document")
 
 
+class Setting(Base):
+    """Persistent key-value configuration that can be changed from the UI without
+    restarting the container. Env vars provide initial defaults; a saved Setting
+    overrides them at runtime."""
+
+    __tablename__ = "settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class AuditLog(Base):
     """Append-only record of mutating actions. Captures who did what, when, and
     to which entity. Never updated or deleted in normal operation."""
