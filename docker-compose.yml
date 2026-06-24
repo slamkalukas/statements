@@ -1,0 +1,64 @@
+# Local development stack. Every setting below has a sensible default, so
+# `docker compose up --build` works with no configuration at all. To customize,
+# copy .env.example to .env and override any of the variables there.
+#
+# The headline mapping is DOCUMENTS_DIR_HOST -> /data/documents: your uploaded
+# bank statements and invoices live on that host folder, organized as
+# <folder>/<YYYY>/<MM>/<file>, so they're yours on disk independent of the app.
+#
+# For a production / pull-only deployment, see docker-compose.prod.yml.
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-16-alpine}
+    restart: ${RESTART_POLICY:-unless-stopped}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-statements}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-statements}
+      POSTGRES_DB: ${POSTGRES_DB:-statements}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    # Expose Postgres on the host (bound to localhost by default) for psql /
+    # backups. Change DB_HOST or DB_PORT, or comment this out to keep it internal.
+    ports:
+      - "${DB_HOST:-127.0.0.1}:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-statements}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    image: ${BACKEND_IMAGE:-slamkalukas/statements-backend:latest}
+    restart: ${RESTART_POLICY:-unless-stopped}
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-statements}:${POSTGRES_PASSWORD:-statements}@db:5432/${POSTGRES_DB:-statements}
+      ENV: ${ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      DOCUMENTS_DIR: /data/documents
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+    volumes:
+      # The external documents folder. Everything you upload is filed here.
+      - ${DOCUMENTS_DIR_HOST:-./documents}:/data/documents
+    depends_on:
+      db:
+        condition: service_healthy
+    # Host port for the API (interactive docs at http://localhost:<API_PORT>/docs).
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  frontend:
+    build: ./frontend
+    image: ${FRONTEND_IMAGE:-slamkalukas/statements-frontend:latest}
+    restart: ${RESTART_POLICY:-unless-stopped}
+    depends_on:
+      - backend
+    # Host port for the web app -> open http://localhost:<APP_PORT>
+    ports:
+      - "${APP_PORT:-3000}:80"
+
+volumes:
+  db_data:

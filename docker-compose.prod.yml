@@ -1,0 +1,68 @@
+# Production / pull-only deployment example.
+#
+# Unlike docker-compose.yml (which builds from source), this file:
+#   - pulls prebuilt images instead of building,
+#   - runs in ENV=production (strict secret check),
+#   - REQUIRES a strong SECRET_KEY, a real POSTGRES_PASSWORD, and ADMIN_PASSWORD
+#     (startup fails without them),
+#   - applies database migrations on boot,
+#   - does NOT expose Postgres to the host.
+#
+# Usage:
+#   cp .env.example .env        # then set the required secrets below
+#   SECRET_KEY=$(openssl rand -hex 32)
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Everything is still overridable via the same variables as the dev stack.
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-16-alpine}
+    restart: ${RESTART_POLICY:-always}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-statements}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a real database password}
+      POSTGRES_DB: ${POSTGRES_DB:-statements}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-statements}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ${BACKEND_IMAGE:-slamkalukas/statements-backend:latest}
+    restart: ${RESTART_POLICY:-always}
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-statements}:${POSTGRES_PASSWORD:?set a real database password}@db:5432/${POSTGRES_DB:-statements}
+      ENV: production
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required in production (e.g. openssl rand -hex 32)}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set an admin password for the first-boot account}
+      DOCUMENTS_DIR: /data/documents
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+    volumes:
+      - ${DOCUMENTS_DIR_HOST:-./documents}:/data/documents
+    # Apply migrations, then serve. In production the app does not auto-create
+    # tables, so this is how the schema is established/updated.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-slamkalukas/statements-frontend:latest}
+    restart: ${RESTART_POLICY:-always}
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-3000}:80"
+
+volumes:
+  db_data:
