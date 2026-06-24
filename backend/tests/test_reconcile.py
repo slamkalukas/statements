@@ -108,6 +108,61 @@ def test_mark_no_document_detaches_existing_link(client, auth_headers, storage):
     assert r["document_id"] is None  # the link was cleared
 
 
+CC_JSON = json.dumps(
+    [
+        {"amount": {"value": -2500, "precision": 2, "currency": "EUR"}, "booking": "2026-09-15",
+         "reference": "Cloud hosting", "partnerName": "AWS"},
+    ]
+).encode()
+
+
+def test_multiple_accounts_per_month(client, auth_headers):
+    pid = _period(client, auth_headers, month=9)
+
+    r1 = client.post(
+        f"/api/periods/{pid}/statement",
+        files={"file": ("bank.json", SLSP_JSON, "application/octet-stream")},
+        data={"source": "Bank account"},
+        headers=auth_headers,
+    )
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["source"] == "Bank account"
+    assert r1.json()["outgoing"] == 2
+
+    r2 = client.post(
+        f"/api/periods/{pid}/statement",
+        files={"file": ("cc.json", CC_JSON, "application/octet-stream")},
+        data={"source": "Credit card"},
+        headers=auth_headers,
+    )
+    assert r2.json()["source"] == "Credit card"
+    assert r2.json()["outgoing"] == 1
+
+    # Lines carry their account; the two accounts stay separate.
+    lines = client.get(f"/api/periods/{pid}/lines", headers=auth_headers).json()
+    bank = [l for l in lines if l["source"] == "Bank account"]
+    card = [l for l in lines if l["source"] == "Credit card"]
+    assert len(bank) == 3 and len(card) == 1
+
+    # Aggregate missing counts every account's outgoing payments (2 + 1).
+    p = next(p for p in client.get("/api/periods", headers=auth_headers).json() if p["id"] == pid)
+    assert p["missing_count"] == 3
+
+    # Re-importing an account dedups within that account only.
+    again = client.post(
+        f"/api/periods/{pid}/statement",
+        files={"file": ("cc.json", CC_JSON, "application/octet-stream")},
+        data={"source": "Credit card"},
+        headers=auth_headers,
+    ).json()
+    assert again["imported"] == 0 and again["duplicates"] == 1
+
+    # Clearing one account leaves the other intact.
+    client.delete(f"/api/periods/{pid}/lines", params={"source": "Credit card"}, headers=auth_headers)
+    after = client.get(f"/api/periods/{pid}/lines", headers=auth_headers).json()
+    assert len(after) == 3 and all(l["source"] == "Bank account" for l in after)
+
+
 def test_import_csv_and_camt(client, auth_headers):
     pid_csv = _period(client, auth_headers, month=4)
     r1 = _import(client, auth_headers, pid_csv, CSV_TEXT, "export.csv")

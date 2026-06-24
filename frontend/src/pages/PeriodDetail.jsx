@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Ban,
   CheckCircle2,
+  CreditCard,
   Download,
   FileText,
   FolderSync,
@@ -111,6 +112,26 @@ export default function PeriodDetail() {
   const missing = outgoing.filter((l) => l.document_id == null && !l.no_doc_needed);
   const empty = docs.length === 0 && lines.length === 0;
 
+  // Group lines into accounts (e.g. "Bank account", "Credit card"), each with
+  // its own outgoing payments and missing list.
+  const accounts = [...new Set(lines.map((l) => l.source || "Bank account"))]
+    .sort()
+    .map((name) => {
+      const accOutgoing = outgoing.filter((l) => (l.source || "Bank account") === name);
+      return {
+        name,
+        outgoing: accOutgoing,
+        missing: accOutgoing.filter((l) => l.document_id == null && !l.no_doc_needed),
+      };
+    });
+
+  async function clearAccount(name) {
+    if (!confirm(`Clear all parsed lines for "${name}"? Uploaded files stay.`)) return;
+    await api.del(`/periods/${id}/lines?source=${encodeURIComponent(name)}`);
+    flash(`Cleared ${name}`);
+    load();
+  }
+
   return (
     <>
       <Link to="/periods" className="back-link">
@@ -160,47 +181,51 @@ export default function PeriodDetail() {
         </div>
 
         {!period.has_statement ? (
-          <StatementImport periodId={period.id} disabled={closed} onDone={(r) => { flash(`Imported ${r.imported} transactions (${r.format})`); load(); }} />
+          <NewAccountImport
+            periodId={period.id}
+            disabled={closed}
+            defaultName="Bank account"
+            onDone={(r) => { flash(`Imported ${r.imported} into ${r.source} (${r.format})`); load(); }}
+          />
         ) : (
           <>
-            <ReconcileTable
-              outgoing={outgoing}
-              closed={closed}
-              onAttach={(line) => setAttachLine(line)}
-              onUnlink={unlink}
-              onMarkNoDoc={markNoDoc}
-              onMarkNeedsDoc={markNeedsDoc}
-              onDownload={(docId, name) => downloadDocument(docId, name)}
-            />
+            {!closed && missing.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+                <button className="btn btn-accent btn-sm" onClick={() => autoMatch(false)} title="Read unpaired documents (skipping ones already read) and pair them to payments by amount across all accounts">
+                  <ScanSearch size={14} /> Scan &amp; auto-match
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => autoMatch(true)} title="Re-read every unpaired document, even ones already read — fixes wrong or missing amounts on files imported earlier">
+                  <ScanSearch size={14} /> Re-scan all
+                </button>
+              </div>
+            )}
+
+            {accounts.map((acc) => (
+              <AccountBlock
+                key={acc.name}
+                acc={acc}
+                periodId={period.id}
+                closed={closed}
+                onAttach={(line) => setAttachLine(line)}
+                onUnlink={unlink}
+                onMarkNoDoc={markNoDoc}
+                onMarkNeedsDoc={markNeedsDoc}
+                onDownload={(docId, name) => downloadDocument(docId, name)}
+                onReimport={(r) => { flash(`${r.source}: imported ${r.imported} new (${r.duplicates} dup)`); load(); }}
+                onClear={() => clearAccount(acc.name)}
+              />
+            ))}
+
             {!closed && (
-              <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-                {missing.length > 0 && (
-                  <button className="btn btn-accent btn-sm" onClick={() => autoMatch(false)} title="Read unpaired documents (skipping ones already read) and pair them to payments by amount">
-                    <ScanSearch size={14} /> Scan &amp; auto-match
-                  </button>
-                )}
-                {missing.length > 0 && (
-                  <button className="btn btn-ghost btn-sm" onClick={() => autoMatch(true)} title="Re-read every unpaired document, even ones already read — fixes wrong or missing amounts on files imported earlier">
-                    <ScanSearch size={14} /> Re-scan all
-                  </button>
-                )}
-                <StatementImport
+              <div className="kind-group" style={{ marginTop: 8 }}>
+                <h4>Add another account</h4>
+                <NewAccountImport
                   periodId={period.id}
                   disabled={closed}
-                  compact
-                  onDone={(r) => { flash(`Imported ${r.imported} new (${r.duplicates} dup)`); load(); }}
+                  defaultName=""
+                  placeholder="e.g. Credit card"
+                  onDone={(r) => { flash(`Imported ${r.imported} into ${r.source} (${r.format})`); load(); }}
                 />
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={async () => {
-                    if (!confirm("Clear all parsed statement lines for this month? Uploaded files stay.")) return;
-                    await api.del(`/periods/${period.id}/lines`);
-                    flash("Statement cleared");
-                    load();
-                  }}
-                >
-                  <Trash2 size={14} /> Clear statement
-                </button>
               </div>
             )}
           </>
@@ -347,7 +372,40 @@ function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onMarkNoDoc, onM
   );
 }
 
-function StatementImport({ periodId, disabled, compact, onDone }) {
+function AccountBlock({ acc, periodId, closed, onAttach, onUnlink, onMarkNoDoc, onMarkNeedsDoc, onDownload, onReimport, onClear }) {
+  return (
+    <div className="kind-group">
+      <h4 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <CreditCard size={15} /> {acc.name}
+        {acc.missing.length === 0 ? (
+          <span className="tag shared"><CheckCircle2 size={12} /> complete</span>
+        ) : (
+          <span className="tag warn"><AlertCircle size={12} /> {acc.missing.length} missing</span>
+        )}
+      </h4>
+      <ReconcileTable
+        outgoing={acc.outgoing}
+        closed={closed}
+        onAttach={onAttach}
+        onUnlink={onUnlink}
+        onMarkNoDoc={onMarkNoDoc}
+        onMarkNeedsDoc={onMarkNeedsDoc}
+        onDownload={onDownload}
+      />
+      {!closed && (
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <StatementImport periodId={periodId} source={acc.name} disabled={closed} onDone={onReimport} />
+          <button className="btn btn-ghost btn-sm" onClick={onClear}>
+            <Trash2 size={14} /> Clear {acc.name}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Re-import a statement for a known account (the source name is fixed).
+function StatementImport({ periodId, source, disabled, onDone }) {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -359,6 +417,7 @@ function StatementImport({ periodId, disabled, compact, onDone }) {
     setError("");
     const fd = new FormData();
     fd.append("file", file);
+    if (source) fd.append("source", source);
     try {
       const r = await api.postForm(`/periods/${periodId}/statement`, fd);
       if (ref.current) ref.current.value = "";
@@ -370,27 +429,68 @@ function StatementImport({ periodId, disabled, compact, onDone }) {
     }
   }
 
-  if (compact) {
-    return (
-      <>
-        <input ref={ref} type="file" style={{ display: "none" }} onChange={submit} disabled={disabled} />
-        <button className="btn btn-sm" disabled={disabled || busy} onClick={() => ref.current?.click()}>
-          {busy ? <Spinner /> : <Upload size={14} />} Re-import statement
-        </button>
-        {error && <span className="error-text">{error}</span>}
-      </>
-    );
+  return (
+    <>
+      <input ref={ref} type="file" style={{ display: "none" }} onChange={submit} disabled={disabled} />
+      <button className="btn btn-sm" disabled={disabled || busy} onClick={() => ref.current?.click()}>
+        {busy ? <Spinner /> : <Upload size={14} />} Re-import
+      </button>
+      {error && <span className="error-text">{error}</span>}
+    </>
+  );
+}
+
+// Import a statement into a (possibly new) account — collects the account name.
+function NewAccountImport({ periodId, disabled, defaultName = "", placeholder, onDone }) {
+  const ref = useRef(null);
+  const [name, setName] = useState(defaultName);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    const file = ref.current?.files?.[0];
+    if (!file) return;
+    const src = name.trim();
+    if (!src) {
+      setError("Enter an account name first.");
+      if (ref.current) ref.current.value = "";
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", src);
+    try {
+      const r = await api.postForm(`/periods/${periodId}/statement`, fd);
+      if (ref.current) ref.current.value = "";
+      setName(defaultName);
+      onDone(r);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className="stack" style={{ gap: 12 }}>
       <p className="muted" style={{ margin: 0 }}>
-        Upload this month's bank statement — its transactions become the checklist. Tatra
+        Upload a statement — its transactions become the checklist for this account.
         CAMT.053 XML, George (SLSP) JSON, and generic CSV are detected automatically.
       </p>
       {error && <p className="error-text">{error}</p>}
+      <div className="field">
+        <label>Account name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={placeholder || "e.g. Bank account"}
+          disabled={disabled}
+        />
+      </div>
       <div className="dropzone">
-        <input ref={ref} type="file" disabled={disabled} onChange={submit} />
+        <input ref={ref} type="file" disabled={disabled || busy} onChange={submit} />
       </div>
       {busy && <Spinner />}
     </div>

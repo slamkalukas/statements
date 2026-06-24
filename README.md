@@ -47,6 +47,9 @@ the browser only ever talks to one origin.
    Payments that legitimately have no invoice (bank fees, charges, FX costs) can
    be marked **"No invoice"** — they drop out of the missing report and are not
    auto-matched. Incoming/transfer lines are ignored.
+   A month can hold **multiple accounts** (e.g. "Bank account" + "Credit card"):
+   each import is tagged with an account name and gets its own statement and
+   missing list, while documents and auto-matching are shared across the month.
    - Digital PDFs are read from their text layer; **scanned, image-only PDFs and
      photos are read with OCR** (Tesseract, Slovak + English). Disable with
      `OCR_ENABLED=0`, or change languages with `OCR_LANG` (must match an

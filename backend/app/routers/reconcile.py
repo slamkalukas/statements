@@ -27,6 +27,7 @@ def serialize(line: StatementLine) -> StatementLineOut:
     return StatementLineOut(
         id=line.id,
         period_id=line.period_id,
+        source=line.source,
         txn_date=line.txn_date,
         amount=float(line.amount),
         description=line.description,
@@ -58,17 +59,21 @@ def list_lines(
 async def import_statement(
     period_id: int,
     file: UploadFile = File(...),
+    source: str = Form("Bank account"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Upload the month's bank statement: store the file (as a bank_statement
-    document) and parse its transactions into reconciliation lines.
+    """Upload a statement for one account (e.g. "Bank account" or "Credit card"):
+    store the file (as a bank_statement document) and parse its transactions into
+    reconciliation lines tagged with that account.
 
-    Re-import is safe — lines that duplicate an existing one (same date + amount
-    + description) are skipped, so the missing report doesn't double-count.
+    Re-import is safe — within the same account, lines that duplicate an existing
+    one (same date + amount + description) are skipped, so the missing report
+    doesn't double-count. Different accounts are kept separate.
     """
     period = get_period(db, period_id)
     assert_period_open(period)
+    source = (source or "Bank account").strip()[:60] or "Bank account"
 
     raw = await file.read()
     try:
@@ -80,11 +85,13 @@ async def import_statement(
     if len(rows) > MAX_LINES:
         raise HTTPException(status_code=413, detail=f"Too many transactions (limit {MAX_LINES})")
 
-    # Existing (date, amount, description) keys so re-imports don't pile up.
+    # Existing (date, amount, description) keys for THIS account, so re-imports
+    # don't pile up. Scoped to the source so identical-looking transactions on a
+    # different account aren't dropped as duplicates.
     seen: set[tuple] = set()
     for d, a, desc in db.execute(
         select(StatementLine.txn_date, StatementLine.amount, StatementLine.description).where(
-            StatementLine.period_id == period.id
+            StatementLine.period_id == period.id, StatementLine.source == source
         )
     ).all():
         seen.add((d, Decimal(a), desc))
@@ -101,6 +108,7 @@ async def import_statement(
         db.add(
             StatementLine(
                 period_id=period.id,
+                source=source,
                 txn_date=r["txn_date"],
                 amount=r["amount"],
                 description=r["description"],
@@ -126,7 +134,7 @@ async def import_statement(
                 stored_path=rel_path,
                 content_type=file.content_type or "",
                 size_bytes=size,
-                note=f"Imported statement ({fmt})",
+                note=f"{source} statement ({fmt})",
             )
         )
     except storage.UploadTooLarge:
@@ -136,11 +144,12 @@ async def import_statement(
 
     audit.record(
         db, user, "create", "statement", period.id,
-        f"{fmt}: {imported} lines ({duplicates} dup)",
+        f"{source} · {fmt}: {imported} lines ({duplicates} dup)",
     )
     db.commit()
     return StatementImportResult(
-        format=fmt, parsed=len(rows), imported=imported, duplicates=duplicates, outgoing=outgoing
+        format=fmt, source=source, parsed=len(rows),
+        imported=imported, duplicates=duplicates, outgoing=outgoing,
     )
 
 
@@ -286,16 +295,19 @@ def delete_line(
 @router.delete("/periods/{period_id}/lines", status_code=204)
 def clear_lines(
     period_id: int,
+    source: str | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Clear all parsed lines for a month (e.g. to re-import a corrected file).
+    """Clear parsed lines for a month (e.g. to re-import a corrected file). With
+    ?source=… only that account's lines are cleared; otherwise all of them.
     Leaves uploaded documents in place."""
     period = get_period(db, period_id)
     assert_period_open(period)
-    for line in db.scalars(
-        select(StatementLine).where(StatementLine.period_id == period_id)
-    ).all():
+    stmt = select(StatementLine).where(StatementLine.period_id == period_id)
+    if source is not None:
+        stmt = stmt.where(StatementLine.source == source)
+    for line in db.scalars(stmt).all():
         db.delete(line)
-    audit.record(db, user, "delete", "statement", period_id, "clear lines")
+    audit.record(db, user, "delete", "statement", period_id, f"clear lines ({source or 'all'})")
     db.commit()

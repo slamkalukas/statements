@@ -65,6 +65,11 @@ class StatementLine(Base):
     period_id: Mapped[int] = mapped_column(
         ForeignKey("periods.id"), nullable=False, index=True
     )
+    # Which account this line came from, e.g. "Bank account" or "Credit card".
+    # A period can hold several statements, one per account.
+    source: Mapped[str] = mapped_column(
+        String(60), nullable=False, server_default="Bank account", default="Bank account"
+    )
     txn_date: Mapped[date] = mapped_column(Date, nullable=False)
     # Signed: negative = money out (a payment we expect a document for).
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)

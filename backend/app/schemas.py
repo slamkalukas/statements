@@ -80,6 +80,7 @@ class DocumentOut(ORMModel):
 class StatementLineOut(BaseModel):
     id: int
     period_id: int
+    source: str = "Bank account"
     txn_date: date
     amount: float          # signed; negative = outgoing payment
     description: str
@@ -92,6 +93,7 @@ class StatementLineOut(BaseModel):
 
 class StatementImportResult(BaseModel):
     format: str
+    source: str
     parsed: int
     imported: int
     duplicates: int
