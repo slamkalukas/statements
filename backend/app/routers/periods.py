@@ -19,7 +19,9 @@ def serialize(period: Period) -> PeriodOut:
     — is the headline number the whole app is about."""
     docs = period.documents
     outgoing = [ln for ln in period.lines if ln.amount < 0]
-    missing = [ln for ln in outgoing if ln.document_id is None]
+    no_doc = [ln for ln in outgoing if ln.no_doc_needed]
+    # "Missing" excludes both documented lines and those marked as not needing one.
+    missing = [ln for ln in outgoing if ln.document_id is None and not ln.no_doc_needed]
     return PeriodOut(
         id=period.id,
         year=period.year,
@@ -32,6 +34,7 @@ def serialize(period: Period) -> PeriodOut:
         total_size=sum(d.size_bytes for d in docs),
         outgoing_count=len(outgoing),
         missing_count=len(missing),
+        no_doc_count=len(no_doc),
     )
 
 

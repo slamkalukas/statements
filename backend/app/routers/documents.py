@@ -143,6 +143,7 @@ def upload_document(
                 StatementLine.period_id == period.id,
                 StatementLine.document_id.is_(None),
                 StatementLine.amount == -doc.amount,
+                StatementLine.no_doc_needed.is_(False),
             )
         ).all()
         if len(matches) == 1:

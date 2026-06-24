@@ -56,7 +56,8 @@ class PeriodOut(ORMModel):
     has_statement: bool = False  # a statement has been imported (lines exist)
     total_size: int = 0
     outgoing_count: int = 0      # outgoing (payment) lines parsed from the statement
-    missing_count: int = 0       # outgoing lines with no linked document — the report
+    missing_count: int = 0       # outgoing lines still needing a document — the report
+    no_doc_count: int = 0        # outgoing lines marked as not needing a document (e.g. fees)
 
 
 # ---- Documents ----
@@ -86,6 +87,7 @@ class StatementLineOut(BaseModel):
     currency: str
     document_id: int | None = None
     document_filename: str | None = None
+    no_doc_needed: bool = False  # marked as not needing a document (e.g. a fee)
 
 
 class StatementImportResult(BaseModel):

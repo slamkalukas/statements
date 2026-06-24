@@ -66,6 +66,48 @@ def test_import_json_counts_outgoing(client, auth_headers):
     assert any(d["kind"] == "bank_statement" for d in docs)
 
 
+def test_mark_no_document_excludes_from_missing(client, auth_headers):
+    pid = _period(client, auth_headers, month=7)
+    _import(client, auth_headers, pid, SLSP_JSON, "george.json")
+    lines = client.get(f"/api/periods/{pid}/lines", headers=auth_headers).json()
+    fee = next(l for l in lines if l["amount"] == -15.0)
+
+    # Mark the fee as not needing a document.
+    r = client.post(f"/api/lines/{fee['id']}/no-document", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["no_doc_needed"] is True
+
+    p = next(p for p in client.get("/api/periods", headers=auth_headers).json() if p["id"] == pid)
+    assert p["outgoing_count"] == 2
+    assert p["missing_count"] == 1   # the fee no longer counts as missing
+    assert p["no_doc_count"] == 1
+
+    # Revert: it needs a document again.
+    client.post(f"/api/lines/{fee['id']}/needs-document", headers=auth_headers)
+    p = next(p for p in client.get("/api/periods", headers=auth_headers).json() if p["id"] == pid)
+    assert p["missing_count"] == 2
+    assert p["no_doc_count"] == 0
+
+
+def test_mark_no_document_detaches_existing_link(client, auth_headers, storage):
+    pid = _period(client, auth_headers, month=8)
+    _import(client, auth_headers, pid, SLSP_JSON, "george.json")
+    lines = client.get(f"/api/periods/{pid}/lines", headers=auth_headers).json()
+    fee = next(l for l in lines if l["amount"] == -15.0)
+
+    # Upload an invoice and link it, then change our mind: no document needed.
+    doc = client.post(
+        f"/api/periods/{pid}/documents",
+        data={"kind": "invoice"},
+        files={"file": ("x.txt", b"hello", "text/plain")},
+        headers=auth_headers,
+    ).json()
+    client.post(f"/api/lines/{fee['id']}/link", json={"document_id": doc["id"]}, headers=auth_headers)
+    r = client.post(f"/api/lines/{fee['id']}/no-document", headers=auth_headers).json()
+    assert r["no_doc_needed"] is True
+    assert r["document_id"] is None  # the link was cleared
+
+
 def test_import_csv_and_camt(client, auth_headers):
     pid_csv = _period(client, auth_headers, month=4)
     r1 = _import(client, auth_headers, pid_csv, CSV_TEXT, "export.csv")

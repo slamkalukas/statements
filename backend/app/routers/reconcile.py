@@ -34,6 +34,7 @@ def serialize(line: StatementLine) -> StatementLineOut:
         currency=line.currency,
         document_id=line.document_id,
         document_filename=line.document.original_filename if line.document else None,
+        no_doc_needed=line.no_doc_needed,
     )
 
 
@@ -222,6 +223,45 @@ def unlink_document(
     assert_period_open(get_period(db, line.period_id))
     line.document_id = None
     audit.record(db, user, "update", "statement_line", line.id, "unlink")
+    db.commit()
+    db.refresh(line)
+    return serialize(line)
+
+
+@router.post("/lines/{line_id}/no-document", response_model=StatementLineOut)
+def mark_no_document(
+    line_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Mark a line as not needing a document (e.g. a bank fee). It then drops out
+    of the missing report and won't be auto-matched. Any linked document is
+    detached, since the line is being declared self-sufficient."""
+    line = db.get(StatementLine, line_id)
+    if line is None:
+        raise HTTPException(status_code=404, detail="Statement line not found")
+    assert_period_open(get_period(db, line.period_id))
+    line.no_doc_needed = True
+    line.document_id = None
+    audit.record(db, user, "update", "statement_line", line.id, "no document needed")
+    db.commit()
+    db.refresh(line)
+    return serialize(line)
+
+
+@router.post("/lines/{line_id}/needs-document", response_model=StatementLineOut)
+def mark_needs_document(
+    line_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Undo "no document needed" — the line goes back to needing a document."""
+    line = db.get(StatementLine, line_id)
+    if line is None:
+        raise HTTPException(status_code=404, detail="Statement line not found")
+    assert_period_open(get_period(db, line.period_id))
+    line.no_doc_needed = False
+    audit.record(db, user, "update", "statement_line", line.id, "needs document")
     db.commit()
     db.refresh(line)
     return serialize(line)

@@ -1,6 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import (
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -8,6 +9,7 @@ from sqlalchemy import (
     Numeric,
     String,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -72,6 +74,11 @@ class StatementLine(Base):
     # The supporting document, once matched. Null = still missing (for outgoing).
     document_id: Mapped[int | None] = mapped_column(
         ForeignKey("documents.id"), nullable=True, index=True
+    )
+    # Marked as not needing a document (e.g. a bank fee). When True the line is
+    # excluded from the "missing" report and from auto-matching.
+    no_doc_needed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false(), default=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

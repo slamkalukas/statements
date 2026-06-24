@@ -44,7 +44,9 @@ the browser only ever talks to one origin.
    candidates or you attach a file directly. **Sync from folder** pulls in files
    dropped into the month folder and reads + pairs each one in the same step;
    **Scan & auto-match** does the same pass on demand for anything still unpaired.
-   Incoming/transfer lines are ignored.
+   Payments that legitimately have no invoice (bank fees, charges, FX costs) can
+   be marked **"No invoice"** — they drop out of the missing report and are not
+   auto-matched. Incoming/transfer lines are ignored.
    - Digital PDFs are read from their text layer; **scanned, image-only PDFs and
      photos are read with OCR** (Tesseract, Slovak + English). Disable with
      `OCR_ENABLED=0`, or change languages with `OCR_LANG` (must match an

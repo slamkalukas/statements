@@ -28,7 +28,10 @@ def summary(
     no_statement = sum(1 for p in periods if len(p.lines) == 0)
 
     def missing(p: Period) -> int:
-        return sum(1 for ln in p.lines if ln.amount < 0 and ln.document_id is None)
+        return sum(
+            1 for ln in p.lines
+            if ln.amount < 0 and ln.document_id is None and not ln.no_doc_needed
+        )
 
     total_missing = sum(missing(p) for p in periods)
     months_with_missing = sum(1 for p in periods if missing(p) > 0)

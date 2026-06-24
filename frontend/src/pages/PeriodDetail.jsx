@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   ArrowLeft,
+  Ban,
   CheckCircle2,
   Download,
   FileText,
@@ -10,6 +11,7 @@ import {
   LockOpen,
   ScanSearch,
   Trash2,
+  Undo2,
   Unlink,
   Upload,
 } from "lucide-react";
@@ -63,6 +65,18 @@ export default function PeriodDetail() {
     load();
   }
 
+  async function markNoDoc(line) {
+    await api.post(`/lines/${line.id}/no-document`);
+    flash("Marked — no invoice needed");
+    load();
+  }
+
+  async function markNeedsDoc(line) {
+    await api.post(`/lines/${line.id}/needs-document`);
+    flash("Marked — needs a document");
+    load();
+  }
+
   async function autoMatch(rescan = false) {
     const r = await api.post(`/periods/${id}/auto-match`, rescan ? { rescan: true } : {});
     const ocr = r.ocr > 0 ? ` (${r.ocr} via OCR)` : "";
@@ -94,7 +108,7 @@ export default function PeriodDetail() {
   }
 
   const outgoing = lines.filter((l) => l.amount < 0);
-  const missing = outgoing.filter((l) => l.document_id == null);
+  const missing = outgoing.filter((l) => l.document_id == null && !l.no_doc_needed);
   const empty = docs.length === 0 && lines.length === 0;
 
   return (
@@ -154,6 +168,8 @@ export default function PeriodDetail() {
               closed={closed}
               onAttach={(line) => setAttachLine(line)}
               onUnlink={unlink}
+              onMarkNoDoc={markNoDoc}
+              onMarkNeedsDoc={markNeedsDoc}
               onDownload={(docId, name) => downloadDocument(docId, name)}
             />
             {!closed && (
@@ -256,12 +272,14 @@ function Amount({ value }) {
   );
 }
 
-function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onDownload }) {
+function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onMarkNoDoc, onMarkNeedsDoc, onDownload }) {
   if (outgoing.length === 0) {
     return <EmptyState title="No outgoing payments" hint="This statement has no payments that need a document." />;
   }
-  // Missing first, so the work to do is at the top.
-  const sorted = [...outgoing].sort((a, b) => (a.document_id == null ? 0 : 1) - (b.document_id == null ? 0 : 1));
+  // A line is "resolved" once it has a document or is marked as not needing one.
+  const resolved = (l) => l.document_id != null || l.no_doc_needed;
+  // Unresolved (still missing) first, so the work to do is at the top.
+  const sorted = [...outgoing].sort((a, b) => (resolved(a) ? 1 : 0) - (resolved(b) ? 1 : 0));
   return (
     <div className="table-wrap">
       <table className="tbl">
@@ -290,6 +308,10 @@ function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onDownload }) {
                   <button className="tag shared" style={{ border: "none", cursor: "pointer" }} onClick={() => onDownload(l.document_id, l.document_filename)}>
                     <CheckCircle2 size={13} /> {l.document_filename}
                   </button>
+                ) : l.no_doc_needed ? (
+                  <span className="tag" title="Marked as not needing a document (e.g. a bank fee)">
+                    <Ban size={13} /> No invoice
+                  </span>
                 ) : (
                   <span className="tag warn">
                     <AlertCircle size={13} /> Missing
@@ -302,10 +324,19 @@ function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onDownload }) {
                     <button className="btn btn-ghost btn-sm" title="Unlink" onClick={() => onUnlink(l)}>
                       <Unlink size={15} />
                     </button>
-                  ) : (
-                    <button className="btn btn-sm" onClick={() => onAttach(l)}>
-                      <Link2 size={14} /> Attach
+                  ) : l.no_doc_needed ? (
+                    <button className="btn btn-ghost btn-sm" title="This does need a document after all" onClick={() => onMarkNeedsDoc(l)}>
+                      <Undo2 size={15} />
                     </button>
+                  ) : (
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn btn-sm" onClick={() => onAttach(l)}>
+                        <Link2 size={14} /> Attach
+                      </button>
+                      <button className="btn btn-ghost btn-sm" title="No invoice expected (e.g. a bank fee) — stop flagging this as missing" onClick={() => onMarkNoDoc(l)}>
+                        <Ban size={14} /> No invoice
+                      </button>
+                    </div>
                   ))}
               </td>
             </tr>

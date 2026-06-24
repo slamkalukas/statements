@@ -57,6 +57,7 @@ def auto_pair(db: Session, period_id: int) -> tuple[int, int, int]:
             StatementLine.period_id == period_id,
             StatementLine.document_id.is_(None),
             StatementLine.amount < 0,
+            StatementLine.no_doc_needed.is_(False),
         )
     ).all()
     docs = db.scalars(

@@ -136,6 +136,24 @@ def test_rescan_corrects_an_existing_amount(client, auth_headers, storage):
     assert doc["amount"] == 50.0
 
 
+def test_auto_match_skips_no_document_lines(client, auth_headers, storage):
+    """A line marked 'no invoice needed' is not auto-paired, even if a document
+    with the same amount exists."""
+    pid = _period(client, auth_headers, 2027, 6)
+    _import(client, auth_headers, pid)  # payments -15.00 and -49.99
+    lines = _lines(client, auth_headers, pid)
+    fee = next(l for l in lines if l["amount"] == -15.0)
+    client.post(f"/api/lines/{fee['id']}/no-document", headers=auth_headers)
+
+    # A document that would otherwise match the -15.00 line.
+    _upload(client, auth_headers, pid, amount="15.00")
+
+    body = client.post(f"/api/periods/{pid}/auto-match", json={}, headers=auth_headers).json()
+    fee_after = next(l for l in _lines(client, auth_headers, pid) if l["id"] == fee["id"])
+    assert fee_after["document_id"] is None       # left alone
+    assert fee_after["no_doc_needed"] is True
+
+
 def test_auto_match_still_works_after_sync(client, auth_headers, storage):
     """Auto-match remains a no-op safety net once sync already paired everything."""
     pid = _period(client, auth_headers, 2026, 9)
