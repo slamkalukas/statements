@@ -4,13 +4,32 @@ Namespace-agnostic (matches by local element name) so it tolerates the
 camt.053.001.02/.04/.08 variants. Returns plain dicts the importer maps to
 statement lines — no I/O, no network, no persistence here.
 """
+import re
 import xml.etree.ElementTree as ET
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+# Some exports (e.g. Tatra Banka) put a custom XML fragment in <AddtlNtryInf> as
+# *escaped* text; the human-readable narrative sits in its <Nrtv> element. These
+# pull the narrative out and strip any stray markup.
+_NRTV_RE = re.compile(r"<Nrtv\b[^>]*>(.*?)</Nrtv>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+
 
 def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
+
+
+def _clean_narrative(s: str) -> str:
+    """If a description came back as embedded markup, extract the <Nrtv> text
+    (or, failing that, strip the tags). Plain text is returned unchanged."""
+    s = (s or "").strip()
+    if "<" not in s:
+        return s
+    nrtv = [t.strip() for t in _NRTV_RE.findall(s) if t.strip()]
+    if nrtv:
+        return " ".join(nrtv)
+    return _TAG_RE.sub("", s).strip()
 
 
 def _child(el, name):
@@ -92,7 +111,16 @@ def parse_camt053(data: bytes) -> list[dict]:
         rmt = _child(tx, "RmtInf") if tx is not None else None
         if rmt is not None:
             ustrd_parts = [_text(c) for c in rmt if _local(c.tag) == "Ustrd" and _text(c)]
-        description = " ".join(ustrd_parts) or _text(_child(n, "AddtlNtryInf"))
+
+        addtl = _child(n, "AddtlNtryInf")
+        addtl_text = _text(addtl)
+        # Some exports nest a real <Nrtv> element under AddtlNtryInf instead of
+        # putting escaped XML in its text; pick that up too.
+        if not addtl_text and addtl is not None:
+            nrtv_el = next((d for d in addtl.iter() if _local(d.tag) == "Nrtv"), None)
+            addtl_text = _text(nrtv_el)
+
+        description = _clean_narrative(" ".join(ustrd_parts) or addtl_text)
 
         # Payee: the counterparty. Outgoing (DBIT) -> creditor; incoming -> debtor.
         payee = ""
