@@ -39,8 +39,15 @@ the browser only ever talks to one origin.
    - generic **CSV** (date / amount / description columns auto-detected).
 3. **Reconcile.** Every **outgoing payment** needs a supporting invoice/bill. The
    month view lists payments with the **missing** ones first. Upload an invoice
-   and the app **suggests the payment with the same amount** to link it to, or
-   attach a file to a payment directly. Incoming/transfer lines are ignored.
+   and the app **reads its total** (and date) and **auto-links the payment with
+   the same amount** when the match is unambiguous; otherwise it suggests
+   candidates or you attach a file directly. "Sync from folder" pulls in files
+   dropped into the month folder, and **Scan & auto-match** reads and pairs them
+   in bulk. Incoming/transfer lines are ignored.
+   - Digital PDFs are read from their text layer; **scanned, image-only PDFs and
+     photos are read with OCR** (Tesseract, Slovak + English). Disable with
+     `OCR_ENABLED=0`, or change languages with `OCR_LANG` (must match an
+     installed pack).
 4. **See what's missing.** Each month shows its count of unmatched payments, and
    the dashboard rolls up the total missing across all months — so "which
    invoices am I still missing?" is answered at a glance.
@@ -116,6 +123,8 @@ override only what you need.
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin@example.com` / `changeme` | The single admin account, created on first boot only. Change the password later from Settings. |
 | `DOCUMENTS_DIR_HOST` | `./documents` | **Host folder** mapped to `/data/documents` — where your files are filed. |
 | `MAX_UPLOAD_MB` | `25` | Per-file upload size cap (kept in sync with nginx). |
+| `OCR_ENABLED` | `1` | OCR scanned/image-only invoices (`0` to disable). |
+| `OCR_LANG` | `slk+eng` | Tesseract languages (must match installed packs). |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `statements` | Database credentials and name. |
 | `POSTGRES_VERSION` | `16-alpine` | Tag of the official `postgres` image. |
 | `DB_HOST` / `DB_PORT` | `127.0.0.1` / `5432` | Host interface + port Postgres is published on (dev stack). |

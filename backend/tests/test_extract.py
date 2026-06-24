@@ -30,6 +30,18 @@ def test_amount_none_when_no_money():
     assert extract.extract_amount("") is None
 
 
+def test_dotted_date_is_not_read_as_amount():
+    # 24.06.2026 must not be mistaken for the amount 24.06.
+    assert extract.extract_amount("Datum 24.06.2026") is None
+    assert extract.extract_amount("Datum 24.06.2026\nSpolu k uhrade 150,00") == Decimal("150.00")
+
+
+def test_keyword_matches_without_diacritics():
+    # OCR often drops Slovak accents — "uhrade" must still match "úhrade".
+    text = "Medzisucet 100,00\nSpolu k uhrade 120,00 EUR"
+    assert extract.extract_amount(text) == Decimal("120.00")
+
+
 def test_date_prefers_issue_hint():
     text = "Splatnosť 30.07.2026\nDátum vystavenia 24.06.2026"
     assert extract.extract_date(text) == date(2026, 6, 24)
@@ -67,4 +79,40 @@ def test_scan_pdf_text_layer():
 def test_scan_unreadable_pdf_returns_none():
     # Not a real PDF — extraction must degrade to (None, None), never raise.
     amount, doc_date = extract.scan_document(b"not a pdf", "x.pdf", "application/pdf")
+    assert amount is None and doc_date is None
+
+
+def _make_text_image(text: str) -> bytes:
+    """A clear, high-contrast PNG with `text` rendered large — OCR-friendly."""
+    PIL = pytest.importorskip("PIL")  # noqa: F841
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.new("RGB", (900, 160), "white")
+    draw = ImageDraw.Draw(img)
+    font = None
+    for path in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+        try:
+            font = ImageFont.truetype(path, 48)
+            break
+        except Exception:
+            continue
+    draw.text((20, 50), text, fill="black", font=font or ImageFont.load_default())
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_ocr_reads_amount_from_image():
+    if not extract.ocr_available():
+        pytest.skip("Tesseract OCR engine not installed in this environment")
+    data = _make_text_image("Spolu k uhrade 88,80 EUR")
+    amount, _ = extract.scan_document(data, "scan.png", "image/png")
+    assert amount == Decimal("88.80")
+
+
+def test_image_returns_none_without_ocr():
+    # When OCR isn't available, an image simply yields no amount (manual pairing).
+    if extract.ocr_available():
+        pytest.skip("OCR available; this checks the no-OCR fallback")
+    amount, doc_date = extract.scan_document(b"\x89PNG fake", "x.png", "image/png")
     assert amount is None and doc_date is None

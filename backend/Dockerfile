@@ -5,6 +5,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Tesseract OCR engine + Slovak/English language data, for reading scanned
+# (image-only) invoices that have no embedded text layer. PDF page rendering is
+# handled in Python by pypdfium2, so no poppler is needed here.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tesseract-ocr tesseract-ocr-slk tesseract-ocr-eng fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -45,6 +45,10 @@ services:
       # Passed through only so the app can show the host path in Settings.
       DOCUMENTS_DIR_HOST: ${DOCUMENTS_DIR_HOST:-./documents}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+      # OCR for scanned, image-only invoices (Tesseract). Set OCR_ENABLED=0 to
+      # turn it off; OCR_LANG selects the language data installed in the image.
+      OCR_ENABLED: ${OCR_ENABLED:-1}
+      OCR_LANG: ${OCR_LANG:-slk+eng}
     volumes:
       - ${DOCUMENTS_DIR_HOST:-./documents}:/data/documents
     # Apply migrations, then serve. In production the app does not auto-create
