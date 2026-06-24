@@ -697,6 +697,31 @@ table.tbl {
   gap: 2px;
   flex-shrink: 0;
 }
+.path-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.path-row .label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+code.path {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  word-break: break-all;
+  color: var(--text);
+}
 .dropzone {
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--radius-sm);

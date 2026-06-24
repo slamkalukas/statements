@@ -13,8 +13,22 @@ from pathlib import Path
 from fastapi import UploadFile
 
 DOCUMENTS_DIR = Path(os.getenv("DOCUMENTS_DIR", "/data/documents")).resolve()
+# The host folder this is bound to (informational — shown in Settings). The
+# backend only ever touches DOCUMENTS_DIR inside the container; this is just the
+# corresponding path on the host, passed through from compose for display.
+DOCUMENTS_HOST_DIR = os.getenv("DOCUMENTS_DIR_HOST", "").strip()
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
+def storage_info() -> dict:
+    """Where documents are stored, for display in Settings."""
+    return {
+        "host_path": DOCUMENTS_HOST_DIR or "(see DOCUMENTS_DIR_HOST in docker-compose)",
+        "container_path": str(DOCUMENTS_DIR),
+        "layout": "<root>/<YYYY>/<MM>/<file>",
+        "max_upload_mb": MAX_UPLOAD_MB,
+    }
 
 # Stream copy chunk size.
 _CHUNK = 1024 * 1024

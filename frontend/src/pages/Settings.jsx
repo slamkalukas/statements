@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { FolderOpen, HardDrive } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Spinner, Toast } from "../components/UI";
 import { useAuth } from "../context/AuthContext";
@@ -10,6 +11,11 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [storage, setStorage] = useState(null);
+
+  useEffect(() => {
+    api.get("/storage").then(setStorage).catch(() => {});
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -38,6 +44,38 @@ export default function Settings() {
           <h1 className="page-title">Settings</h1>
           <p className="page-sub">Signed in as {user?.email}</p>
         </div>
+      </div>
+
+      <div className="card card-pad" style={{ maxWidth: 620, marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+          <FolderOpen size={18} /> Documents folder
+        </h3>
+        <p className="page-sub" style={{ marginBottom: 16 }}>
+          Where your uploaded statements and invoices are stored on disk.
+        </p>
+        {storage ? (
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="path-row">
+              <div className="label">
+                <HardDrive size={14} /> Host folder
+              </div>
+              <code className="path">{storage.host_path}</code>
+              <span className="doc-meta">The folder on your machine (mapped into the container).</span>
+            </div>
+            <div className="path-row">
+              <div className="label">In container</div>
+              <code className="path">{storage.container_path}</code>
+            </div>
+            <div className="path-row">
+              <div className="label">Layout</div>
+              <code className="path">{storage.layout}</code>
+              <span className="doc-meta">Files are filed by year and month, e.g. 2026/06/.</span>
+            </div>
+            <div className="doc-meta">Per-file upload limit: {storage.max_upload_mb} MB.</div>
+          </div>
+        ) : (
+          <Spinner />
+        )}
       </div>
 
       <div className="card card-pad" style={{ maxWidth: 460 }}>

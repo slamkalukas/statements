@@ -99,6 +99,14 @@ class LinkRequest(BaseModel):
     document_id: int
 
 
+# ---- Storage info (Settings) ----
+class StorageInfo(BaseModel):
+    host_path: str        # the folder on the host where files are filed
+    container_path: str   # where the backend writes inside the container
+    layout: str           # how files are organized within the root
+    max_upload_mb: int
+
+
 # ---- Dashboard ----
 class DashboardSummary(BaseModel):
     periods_tracked: int
