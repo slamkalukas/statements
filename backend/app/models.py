@@ -43,7 +43,14 @@ class Period(Base):
     month: Mapped[int] = mapped_column(Integer, nullable=False)  # 1..12
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")  # open | closed
     note: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    # Custom documents subfolder (relative to the root). NULL = default YYYY/MM.
+    folder: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    @property
+    def folder_path(self) -> str:
+        """Effective documents subfolder for this month (relative to the root)."""
+        return self.folder or f"{self.year:04d}/{self.month:02d}"
 
     documents: Mapped[list["Document"]] = relationship(
         back_populates="period", cascade="all, delete-orphan"

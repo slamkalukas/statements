@@ -11,6 +11,7 @@ import {
   Link2,
   Lock,
   LockOpen,
+  Pencil,
   ScanSearch,
   Trash2,
   Undo2,
@@ -243,6 +244,7 @@ export default function PeriodDetail() {
         onUploaded={(doc) => { flash(uploadMessage(doc)); load(); }}
         onDownload={(docId, name) => downloadDocument(docId, name)}
         onDelete={removeDoc}
+        onChanged={() => { flash("Folder updated"); load(); }}
       />
 
       {empty && !closed && (
@@ -685,7 +687,69 @@ function MoveModal({ line, currentYear, currentMonth, onClose, onDone }) {
   );
 }
 
-function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete }) {
+function FolderField({ period, disabled, onChanged }) {
+  const fallback = `${period.year}/${String(period.month).padStart(2, "0")}`;
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(period.folder);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { setVal(period.folder); }, [period.folder]);
+
+  async function save() {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.post(`/periods/${period.id}/folder`, { folder: val });
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <p className="page-sub" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        Stored on the host folder under <code className="path">{period.folder}/</code>
+        {!disabled && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Change this month's folder">
+            <Pencil size={13} /> change
+          </button>
+        )}
+      </p>
+    );
+  }
+
+  return (
+    <div className="stack" style={{ gap: 8, marginBottom: 16 }}>
+      <label className="page-sub" style={{ margin: 0 }}>Documents subfolder (relative to the root)</label>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          placeholder={fallback}
+          style={{ flex: 1, fontFamily: "monospace", fontSize: 13 }}
+        />
+        <button className="btn btn-accent btn-sm" disabled={busy} onClick={save}>
+          {busy ? <Spinner /> : "Save"}
+        </button>
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { setVal(period.folder); setErr(""); setEditing(false); }}>
+          Cancel
+        </button>
+      </div>
+      {err && <p className="error-text">{err}</p>}
+      <p className="doc-meta">
+        Blank resets to the default <code>{fallback}</code>. Changing it only affects
+        new uploads and folder sync — files already stored stay where they are.
+      </p>
+    </div>
+  );
+}
+
+function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete, onChanged }) {
   const grouped = KINDS.map((kind) => ({ kind, items: docs.filter((d) => d.kind === kind) })).filter(
     (g) => g.items.length > 0
   );
@@ -716,9 +780,7 @@ function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete 
     <div className="doc-grid">
       <div className="card card-pad">
         <h3 style={{ marginBottom: 4 }}>Add a document</h3>
-        <p className="page-sub" style={{ marginBottom: 16 }}>
-          Stored on the host folder under {period.year}/{String(period.month).padStart(2, "0")}/.
-        </p>
+        <FolderField period={period} disabled={closed} onChanged={onChanged} />
         {!closed && (
           <div style={{ marginBottom: 16 }}>
             <button

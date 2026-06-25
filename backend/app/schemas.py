@@ -44,12 +44,18 @@ class PeriodCreate(BaseModel):
     note: str = Field(default="", max_length=512)
 
 
+class PeriodFolderUpdate(BaseModel):
+    # Relative subfolder under the documents root; blank resets to the default YYYY/MM.
+    folder: str = Field(default="", max_length=255)
+
+
 class PeriodOut(ORMModel):
     id: int
     year: int
     month: int
     status: str
     note: str
+    folder: str = ""        # effective documents subfolder (relative to the root)
     created_at: datetime | None = None
     # Computed completeness/summary fields.
     document_count: int = 0

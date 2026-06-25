@@ -84,18 +84,35 @@ def _assert_inside_root(path: Path) -> None:
         raise ValueError("Resolved path escapes the documents directory")
 
 
-def save_upload(year: int, month: int, upload: UploadFile) -> tuple[str, int, str]:
-    """Persist an upload under <root>/<YYYY>/<MM>/, streaming with a size cap.
+def normalize_folder(rel: str) -> str:
+    """Normalize a user-supplied relative subfolder to a safe posix path under
+    the root. Returns "" for the root. Raises ValueError if it escapes the root."""
+    raw = (rel or "").strip().replace("\\", "/").strip("/")
+    parts = [sanitize_filename(p) for p in raw.split("/") if p not in ("", ".", "..")]
+    folder = DOCUMENTS_DIR.joinpath(*parts).resolve() if parts else DOCUMENTS_DIR
+    _assert_inside_root(folder)
+    return "/".join(parts)
+
+
+def resolve_folder(rel: str) -> Path:
+    """Absolute path for a relative subfolder under the root, traversal-guarded."""
+    norm = normalize_folder(rel)
+    path = (DOCUMENTS_DIR / norm).resolve() if norm else DOCUMENTS_DIR
+    _assert_inside_root(path)
+    return path
+
+
+def save_upload(folder: str, upload: UploadFile) -> tuple[str, int, str]:
+    """Persist an upload under <root>/<folder>/, streaming with a size cap.
 
     Returns (relative_stored_path, size_bytes, original_filename). Raises
     UploadTooLarge if the stream exceeds the cap (the partial file is removed).
     """
     filename = sanitize_filename(upload.filename or "document")
-    folder = DOCUMENTS_DIR / f"{year:04d}" / f"{month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
-    _assert_inside_root(folder)
+    dest_folder = resolve_folder(folder)
+    dest_folder.mkdir(parents=True, exist_ok=True)
 
-    dest = _unique_path(folder, filename)
+    dest = _unique_path(dest_folder, filename)
     _assert_inside_root(dest)
 
     size = 0
@@ -117,17 +134,15 @@ def save_upload(year: int, month: int, upload: UploadFile) -> tuple[str, int, st
     return relative, size, (upload.filename or filename)
 
 
-def save_upload_bytes(year: int, month: int, filename: str, data: bytes) -> tuple[str, int, str]:
-    """Persist already-read bytes under <root>/<YYYY>/<MM>/. Same layout, naming,
-    and traversal/size guards as save_upload. Returns (relative_path, size, name).
-    """
+def save_upload_bytes(folder: str, filename: str, data: bytes) -> tuple[str, int, str]:
+    """Persist already-read bytes under <root>/<folder>/. Same naming and
+    traversal/size guards as save_upload. Returns (relative_path, size, name)."""
     if len(data) > MAX_UPLOAD_BYTES:
         raise UploadTooLarge()
     safe = sanitize_filename(filename or "document")
-    folder = DOCUMENTS_DIR / f"{year:04d}" / f"{month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
-    _assert_inside_root(folder)
-    dest = _unique_path(folder, safe)
+    dest_folder = resolve_folder(folder)
+    dest_folder.mkdir(parents=True, exist_ok=True)
+    dest = _unique_path(dest_folder, safe)
     _assert_inside_root(dest)
     dest.write_bytes(data)
     return dest.relative_to(DOCUMENTS_DIR).as_posix(), len(data), (filename or safe)
@@ -202,9 +217,8 @@ def delete(stored_path: str) -> None:
         folder = folder.parent
 
 
-def delete_tree(year: int, month: int) -> None:
-    """Remove a whole month folder (used when deleting an empty period)."""
-    folder = (DOCUMENTS_DIR / f"{year:04d}" / f"{month:02d}").resolve()
-    _assert_inside_root(folder)
-    if folder.is_dir():
-        shutil.rmtree(folder, ignore_errors=True)
+def delete_tree(folder: str) -> None:
+    """Remove a whole subfolder (used when deleting an empty period)."""
+    path = resolve_folder(folder)
+    if path != DOCUMENTS_DIR and path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)

@@ -65,6 +65,10 @@ the browser only ever talks to one origin.
    documents root — navigate the `YYYY/MM` folders with a breadcrumb and
    download any file, all confined to the root (no path traversal).
 
+Each month stores its files under `<root>/YYYY/MM/` by default, but that
+subfolder is **editable per month** (e.g. `2026/04-vat`) — changing it affects
+new uploads and folder sync; already-stored files stay where they are.
+
 Documents are tagged **invoice**, **receipt**, **bank statement**, or **other**,
 with an optional date/amount/note. Files are written to your mapped folder; the
 database holds the index, the parsed statement lines, the document↔payment links,

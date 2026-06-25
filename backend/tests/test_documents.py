@@ -39,6 +39,35 @@ def test_upload_lands_on_disk_under_year_month(client, auth_headers, storage):
     assert period["total_size"] == len(b"PDF-BYTES")
 
 
+def test_custom_folder_changes_upload_location(client, auth_headers, storage):
+    pid = _period(client, auth_headers, 2026, 4)
+
+    # Set a custom subfolder for this month.
+    r = client.post(f"/api/periods/{pid}/folder", json={"folder": "2026/04-vat"}, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["folder"] == "2026/04-vat"
+
+    # Uploads now land under the custom folder, not 2026/04.
+    _upload(client, auth_headers, pid, name="bill.pdf", kind="invoice", content=b"X")
+    assert (storage.DOCUMENTS_DIR / "2026" / "04-vat" / "bill.pdf").is_file()
+    assert not (storage.DOCUMENTS_DIR / "2026" / "04" / "bill.pdf").exists()
+
+
+def test_blank_folder_resets_to_default(client, auth_headers, storage):
+    pid = _period(client, auth_headers, 2026, 5)
+    client.post(f"/api/periods/{pid}/folder", json={"folder": "custom/x"}, headers=auth_headers)
+    back = client.post(f"/api/periods/{pid}/folder", json={"folder": ""}, headers=auth_headers).json()
+    assert back["folder"] == "2026/05"  # default restored
+
+
+def test_folder_traversal_is_neutralized(client, auth_headers, storage):
+    pid = _period(client, auth_headers, 2026, 6)
+    # ".." segments are stripped, so the path can't escape the root.
+    r = client.post(f"/api/periods/{pid}/folder", json={"folder": "../../etc"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert ".." not in r.json()["folder"]
+
+
 def test_download_round_trips_bytes(client, auth_headers):
     pid = _period(client, auth_headers)
     doc_id = _upload(client, auth_headers, pid, content=b"hello world").json()["id"]

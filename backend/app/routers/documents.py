@@ -94,7 +94,7 @@ def upload_document(
     parsed_amount = _parse_optional_amount(amount)
 
     try:
-        rel_path, size, original = storage.save_upload(period.year, period.month, file)
+        rel_path, size, original = storage.save_upload(period.folder_path, file)
     except storage.UploadTooLarge:
         raise HTTPException(
             status_code=413, detail=f"File too large (limit {storage.MAX_UPLOAD_MB} MB)"

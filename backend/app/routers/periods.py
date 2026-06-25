@@ -8,7 +8,7 @@ from .. import audit, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, Period, StatementLine, User
-from ..schemas import PeriodCreate, PeriodOut, SyncResult
+from ..schemas import PeriodCreate, PeriodFolderUpdate, PeriodOut, SyncResult
 
 router = APIRouter(prefix="/api/periods", tags=["periods"])
 
@@ -28,6 +28,7 @@ def serialize(period: Period) -> PeriodOut:
         month=period.month,
         status=period.status,
         note=period.note,
+        folder=period.folder_path,
         created_at=period.created_at,
         document_count=len(docs),
         has_statement=len(period.lines) > 0,
@@ -66,6 +67,32 @@ def create_period(
     db.add(period)
     db.flush()
     audit.record(db, user, "create", "period", period.id, f"{payload.year}-{payload.month:02d}")
+    db.commit()
+    db.refresh(period)
+    return serialize(period)
+
+
+@router.post("/{period_id}/folder", response_model=PeriodOut)
+def set_folder(
+    period_id: int,
+    payload: PeriodFolderUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Set this month's documents subfolder (relative to the root). A blank value
+    resets to the default YYYY/MM. Only affects where *new* uploads and folder
+    sync go — already-stored files keep their location and stay downloadable."""
+    period = get_period(db, period_id)
+    assert_period_open(period)
+    try:
+        norm = storage.normalize_folder(payload.folder)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid folder path")
+    default = f"{period.year:04d}/{period.month:02d}"
+    # Store None when it's blank or equals the default, so it stays in sync if the
+    # default scheme ever changes.
+    period.folder = None if (not norm or norm == default) else norm
+    audit.record(db, user, "update", "period", period.id, f"folder={period.folder_path}")
     db.commit()
     db.refresh(period)
     return serialize(period)
@@ -111,7 +138,7 @@ def sync_from_folder(
     period = get_period(db, period_id)
     assert_period_open(period)
 
-    folder = storage.DOCUMENTS_DIR / f"{period.year:04d}" / f"{period.month:02d}"
+    folder = storage.resolve_folder(period.folder_path)
     if not folder.is_dir():
         return SyncResult(scanned=0, imported=0, skipped=0)
 

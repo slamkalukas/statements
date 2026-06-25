@@ -126,7 +126,7 @@ async def import_statement(
     try:
         # Rewind so we can persist the bytes we already read.
         rel_path, size, original = storage.save_upload_bytes(
-            period.year, period.month, file.filename or "statement", raw
+            period.folder_path, file.filename or "statement", raw
         )
         db.add(
             Document(
