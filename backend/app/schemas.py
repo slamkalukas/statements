@@ -104,6 +104,12 @@ class LinkRequest(BaseModel):
     document_id: int
 
 
+class MoveLineRequest(BaseModel):
+    # Target accounting month for the line (the period is created if absent).
+    year: int = Field(ge=1970, le=2200)
+    month: int = Field(ge=1, le=12)
+
+
 # ---- Storage info (Settings) ----
 class StorageInfo(BaseModel):
     host_path: str        # the folder on the host where files are filed

@@ -163,6 +163,40 @@ def test_multiple_accounts_per_month(client, auth_headers):
     assert len(after) == 3 and all(l["source"] == "Bank account" for l in after)
 
 
+def test_move_line_to_another_month(client, auth_headers):
+    # Import into May; one payment actually belongs to April's books.
+    may = _period(client, auth_headers, 2026, 5)
+    _import(client, auth_headers, may, SLSP_JSON, "may.json")
+    line = next(l for l in client.get(f"/api/periods/{may}/lines", headers=auth_headers).json()
+                if l["amount"] == -15.0)
+
+    # Move it to April (which doesn't exist yet — it gets created).
+    r = client.post(f"/api/lines/{line['id']}/move", json={"year": 2026, "month": 4}, headers=auth_headers)
+    assert r.status_code == 200, r.text
+
+    # It's gone from May and now in April, keeping its transaction date.
+    may_lines = client.get(f"/api/periods/{may}/lines", headers=auth_headers).json()
+    assert all(l["id"] != line["id"] for l in may_lines)
+    periods = client.get("/api/periods", headers=auth_headers).json()
+    april = next(p for p in periods if p["year"] == 2026 and p["month"] == 4)
+    april_lines = client.get(f"/api/periods/{april['id']}/lines", headers=auth_headers).json()
+    moved = next(l for l in april_lines if l["id"] == line["id"])
+    assert moved["txn_date"] == "2026-06-03"  # original date preserved
+
+
+def test_reimport_does_not_recreate_a_moved_line(client, auth_headers):
+    may = _period(client, auth_headers, 2026, 5)
+    _import(client, auth_headers, may, SLSP_JSON, "may.json")
+    line = next(l for l in client.get(f"/api/periods/{may}/lines", headers=auth_headers).json()
+                if l["amount"] == -15.0)
+    client.post(f"/api/lines/{line['id']}/move", json={"year": 2026, "month": 4}, headers=auth_headers)
+
+    # Re-importing the same May statement must NOT recreate the moved line.
+    again = _import(client, auth_headers, may, SLSP_JSON, "may.json").json()
+    assert again["imported"] == 0
+    assert again["duplicates"] == 3  # all three lines already exist (one now in April)
+
+
 def test_import_csv_and_camt(client, auth_headers):
     pid_csv = _period(client, auth_headers, month=4)
     r1 = _import(client, auth_headers, pid_csv, CSV_TEXT, "export.csv")

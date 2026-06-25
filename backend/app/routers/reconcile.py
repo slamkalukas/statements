@@ -7,11 +7,12 @@ from sqlalchemy.orm import Session, selectinload
 from .. import audit, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
-from ..models import Document, StatementLine, User
+from ..models import Document, Period, StatementLine, User
 from ..schemas import (
     AutoMatchRequest,
     AutoMatchResult,
     LinkRequest,
+    MoveLineRequest,
     StatementImportResult,
     StatementLineOut,
 )
@@ -86,12 +87,13 @@ async def import_statement(
         raise HTTPException(status_code=413, detail=f"Too many transactions (limit {MAX_LINES})")
 
     # Existing (date, amount, description) keys for THIS account, so re-imports
-    # don't pile up. Scoped to the source so identical-looking transactions on a
-    # different account aren't dropped as duplicates.
+    # don't pile up. Scoped to the account across *all* months (not just this
+    # one) so a line moved to another month isn't recreated on re-import, while
+    # identical-looking transactions on a different account stay separate.
     seen: set[tuple] = set()
     for d, a, desc in db.execute(
         select(StatementLine.txn_date, StatementLine.amount, StatementLine.description).where(
-            StatementLine.period_id == period.id, StatementLine.source == source
+            StatementLine.source == source
         )
     ).all():
         seen.add((d, Decimal(a), desc))
@@ -234,6 +236,43 @@ def unlink_document(
     audit.record(db, user, "update", "statement_line", line.id, "unlink")
     db.commit()
     db.refresh(line)
+    return serialize(line)
+
+
+@router.post("/lines/{line_id}/move", response_model=StatementLineOut)
+def move_line(
+    line_id: int,
+    payload: MoveLineRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Reassign a line to another accounting month (e.g. a payment posted in May
+    that belongs to April's books). The line keeps its transaction date and
+    account; only which month's report it counts in changes. The target month is
+    created if it doesn't exist yet."""
+    line = db.get(StatementLine, line_id)
+    if line is None:
+        raise HTTPException(status_code=404, detail="Statement line not found")
+    assert_period_open(get_period(db, line.period_id))
+
+    target = db.scalar(
+        select(Period).where(Period.year == payload.year, Period.month == payload.month)
+    )
+    if target is None:
+        target = Period(year=payload.year, month=payload.month, note="")
+        db.add(target)
+        db.flush()
+        audit.record(db, user, "create", "period", target.id, f"{payload.year}-{payload.month:02d}")
+    assert_period_open(target)
+
+    if target.id != line.period_id:
+        line.period_id = target.id
+        audit.record(
+            db, user, "update", "statement_line", line.id,
+            f"move to {payload.year}-{payload.month:02d}",
+        )
+        db.commit()
+        db.refresh(line)
     return serialize(line)
 
 

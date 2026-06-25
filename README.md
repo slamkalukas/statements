@@ -51,6 +51,9 @@ the browser only ever talks to one origin.
    A month can hold **multiple accounts** (e.g. "Bank account" + "Credit card"):
    each import is tagged with an account name and gets its own statement and
    missing list, while documents and auto-matching are shared across the month.
+   A payment posted in one month but belonging to another's books can be **moved
+   to another month** (it keeps its date; re-importing the statement won't
+   recreate it).
    - Digital PDFs are read from their text layer; **scanned, image-only PDFs and
      photos are read with OCR** (Tesseract, Slovak + English). Disable with
      `OCR_ENABLED=0`, or change languages with `OCR_LANG` (must match an

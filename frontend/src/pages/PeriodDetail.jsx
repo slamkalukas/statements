@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowRightLeft,
   Ban,
   CheckCircle2,
   CreditCard,
@@ -30,6 +31,7 @@ export default function PeriodDetail() {
   const [docs, setDocs] = useState(null);
   const [toast, setToast] = useState("");
   const [attachLine, setAttachLine] = useState(null);
+  const [moveLine, setMoveLine] = useState(null);
 
   async function load() {
     const [periods, ls, ds] = await Promise.all([
@@ -210,6 +212,7 @@ export default function PeriodDetail() {
                 onUnlink={unlink}
                 onMarkNoDoc={markNoDoc}
                 onMarkNeedsDoc={markNeedsDoc}
+                onMove={(line) => setMoveLine(line)}
                 onDownload={(docId, name) => downloadDocument(docId, name)}
                 onReimport={(r) => { flash(`${r.source}: imported ${r.imported} new (${r.duplicates} dup)`); load(); }}
                 onClear={() => clearAccount(acc.name)}
@@ -260,6 +263,20 @@ export default function PeriodDetail() {
         />
       )}
 
+      {moveLine && (
+        <MoveModal
+          line={moveLine}
+          currentYear={period.year}
+          currentMonth={period.month}
+          onClose={() => setMoveLine(null)}
+          onDone={(r) => {
+            setMoveLine(null);
+            flash(`Moved to ${periodLabel(r.year || period.year, r.month || period.month)}`);
+            load();
+          }}
+        />
+      )}
+
       <Toast message={toast} />
     </>
   );
@@ -297,7 +314,7 @@ function Amount({ value }) {
   );
 }
 
-function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onMarkNoDoc, onMarkNeedsDoc, onDownload }) {
+function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onMarkNoDoc, onMarkNeedsDoc, onMove, onDownload }) {
   if (outgoing.length === 0) {
     return <EmptyState title="No outgoing payments" hint="This statement has no payments that need a document." />;
   }
@@ -344,25 +361,31 @@ function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onMarkNoDoc, onM
                 )}
               </td>
               <td className="right">
-                {!closed &&
-                  (l.document_id ? (
-                    <button className="btn btn-ghost btn-sm" title="Unlink" onClick={() => onUnlink(l)}>
-                      <Unlink size={15} />
-                    </button>
-                  ) : l.no_doc_needed ? (
-                    <button className="btn btn-ghost btn-sm" title="This does need a document after all" onClick={() => onMarkNeedsDoc(l)}>
-                      <Undo2 size={15} />
-                    </button>
-                  ) : (
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                      <button className="btn btn-sm" onClick={() => onAttach(l)}>
-                        <Link2 size={14} /> Attach
+                {!closed && (
+                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center" }}>
+                    {l.document_id ? (
+                      <button className="btn btn-ghost btn-sm" title="Unlink" onClick={() => onUnlink(l)}>
+                        <Unlink size={15} />
                       </button>
-                      <button className="btn btn-ghost btn-sm" title="No invoice expected (e.g. a bank fee) — stop flagging this as missing" onClick={() => onMarkNoDoc(l)}>
-                        <Ban size={14} /> No invoice
+                    ) : l.no_doc_needed ? (
+                      <button className="btn btn-ghost btn-sm" title="This does need a document after all" onClick={() => onMarkNeedsDoc(l)}>
+                        <Undo2 size={15} />
                       </button>
-                    </div>
-                  ))}
+                    ) : (
+                      <>
+                        <button className="btn btn-sm" onClick={() => onAttach(l)}>
+                          <Link2 size={14} /> Attach
+                        </button>
+                        <button className="btn btn-ghost btn-sm" title="No invoice expected (e.g. a bank fee) — stop flagging this as missing" onClick={() => onMarkNoDoc(l)}>
+                          <Ban size={14} /> No invoice
+                        </button>
+                      </>
+                    )}
+                    <button className="btn btn-ghost btn-sm" title="Move to another month" onClick={() => onMove(l)}>
+                      <ArrowRightLeft size={14} />
+                    </button>
+                  </div>
+                )}
               </td>
             </tr>
           ))}
@@ -372,7 +395,7 @@ function ReconcileTable({ outgoing, closed, onAttach, onUnlink, onMarkNoDoc, onM
   );
 }
 
-function AccountBlock({ acc, periodId, closed, onAttach, onUnlink, onMarkNoDoc, onMarkNeedsDoc, onDownload, onReimport, onClear }) {
+function AccountBlock({ acc, periodId, closed, onAttach, onUnlink, onMarkNoDoc, onMarkNeedsDoc, onMove, onDownload, onReimport, onClear }) {
   return (
     <div className="kind-group">
       <h4 style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -390,6 +413,7 @@ function AccountBlock({ acc, periodId, closed, onAttach, onUnlink, onMarkNoDoc, 
         onUnlink={onUnlink}
         onMarkNoDoc={onMarkNoDoc}
         onMarkNeedsDoc={onMarkNeedsDoc}
+        onMove={onMove}
         onDownload={onDownload}
       />
       {!closed && (
@@ -599,6 +623,63 @@ function AttachModal({ line, periodId, documents, onClose, onDone }) {
             {busy ? <Spinner /> : <Upload size={16} />} Upload &amp; link
           </button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+function MoveModal({ line, currentYear, currentMonth, onClose, onDone }) {
+  // Default to the previous month — the common "posted next month, belongs to
+  // the previous one" case.
+  const prev = currentMonth === 1
+    ? { y: currentYear - 1, m: 12 }
+    : { y: currentYear, m: currentMonth - 1 };
+  const [year, setYear] = useState(prev.y);
+  const [month, setMonth] = useState(prev.m);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/lines/${line.id}/move`, { year: Number(year), month: Number(month) });
+      onDone({ year: Number(year), month: Number(month) });
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Move to another month" onClose={onClose}>
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="muted">
+          {line.payee || line.description || "Payment"} ·{" "}
+          <span className="num">{formatAmount(Math.abs(line.amount))}</span> · {line.txn_date}
+        </div>
+        {error && <p className="error-text">{error}</p>}
+        <div className="row-2">
+          <div className="field">
+            <label htmlFor="mv-year">Year</label>
+            <input id="mv-year" type="number" value={year} onChange={(e) => setYear(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="mv-month">Month</label>
+            <select id="mv-month" value={month} onChange={(e) => setMonth(e.target.value)}>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="doc-meta">
+          The transaction keeps its date ({line.txn_date}); only which month's report
+          it counts in changes. The month is created if it doesn't exist yet.
+        </p>
+        <button className="btn btn-accent" disabled={busy} onClick={submit}>
+          {busy ? <Spinner /> : <ArrowRightLeft size={16} />} Move
+        </button>
       </div>
     </Modal>
   );
