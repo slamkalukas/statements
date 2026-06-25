@@ -1,7 +1,8 @@
 """Statement parsing: turn an uploaded bank export into transaction lines.
 
-Three formats are supported and auto-detected from the file content:
+Formats are supported and auto-detected from the file content:
   - ISO 20022 CAMT.053 XML (e.g. Tatra Banka)        -> camt.parse_camt053
+  - OFX 2.x XML (e.g. Tatra Banka credit-card export) -> ofx.parse_ofx
   - George / Erste JSON export (Slovenská sporiteľňa) -> slsp.parse_slsp_json
   - generic CSV with auto-detected columns            -> parse_csv (here)
 
@@ -16,6 +17,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from .camt import parse_camt053
+from .ofx import parse_ofx
 from .slsp import parse_slsp_json
 
 _DATE_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"]
@@ -117,10 +119,33 @@ def parse_statement(data: bytes) -> tuple[list[dict], str]:
     errors: list[str] = []
 
     if head == b"<":
+        # Both CAMT.053 and OFX are XML — pick by a quick marker sniff, but fall
+        # back to the other if the first yields nothing.
+        sniff = data[:800].decode("utf-8", "ignore").upper()
+        is_ofx = "OFX" in sniff or "STMTTRN" in sniff
+        if is_ofx:
+            try:
+                rows = parse_ofx(data)
+                if rows:
+                    return rows, "OFX"
+                errors.append("OFX: no transactions found")
+            except ValueError as exc:
+                errors.append(f"OFX: {exc}")
         try:
-            return parse_camt053(data), "CAMT.053 XML"
+            rows = parse_camt053(data)
+            if rows:
+                return rows, "CAMT.053 XML"
+            errors.append("CAMT: no transactions found")
         except ValueError as exc:
             errors.append(f"XML: {exc}")
+        # If it looked like OFX but markers were missed above, try OFX last.
+        if not is_ofx:
+            try:
+                rows = parse_ofx(data)
+                if rows:
+                    return rows, "OFX"
+            except ValueError as exc:
+                errors.append(f"OFX: {exc}")
     if head in (b"{", b"["):
         try:
             return parse_slsp_json(data), "George JSON"

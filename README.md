@@ -33,8 +33,9 @@ the browser only ever talks to one origin.
 1. **Create a month** (e.g. June 2026). Each month is *open* (editable) or
    *closed* (archived/locked, to prevent accidental changes).
 2. **Import the bank statement.** The statement's transactions are parsed into a
-   checklist. Three formats are detected automatically:
+   checklist. Formats are detected automatically:
    - ISO 20022 **CAMT.053 XML** (e.g. Tatra Banka),
+   - **OFX 2.x XML** (e.g. Tatra Banka credit-card export),
    - **George / Erste JSON** (Slovenská sporiteľňa),
    - generic **CSV** (date / amount / description columns auto-detected).
 3. **Reconcile.** Every **outgoing payment** needs a supporting invoice/bill. The
