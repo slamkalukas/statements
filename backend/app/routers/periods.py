@@ -1,4 +1,5 @@
 import mimetypes
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -11,6 +12,18 @@ from ..models import Document, Period, StatementLine, User
 from ..schemas import PeriodCreate, PeriodFolderUpdate, PeriodOut, SyncResult
 
 router = APIRouter(prefix="/api/periods", tags=["periods"])
+
+# A leading month in a filename, e.g. "05_shell.pdf" / "5-foo" / "05.invoice".
+_MONTH_PREFIX = re.compile(r"^(\d{1,2})[ _.\-]")
+
+
+def _file_month(name: str) -> int | None:
+    m = _MONTH_PREFIX.match(name)
+    if m:
+        mm = int(m.group(1))
+        if 1 <= mm <= 12:
+            return mm
+    return None
 
 
 def serialize(period: Period) -> PeriodOut:
@@ -134,7 +147,11 @@ def sync_from_folder(
 ):
     """Scan the month's folder on disk and register any files not yet in the DB.
     New files are imported as kind='other' so they appear in the Documents list
-    and can be re-typed / linked to statement lines from the UI."""
+    and can be re-typed / linked to statement lines from the UI.
+
+    Files named with a leading month (e.g. "05_shell.pdf") are only picked up by
+    that month's sync, so several months can share one folder. Files without a
+    month prefix are taken as-is (the per-month subfolder is the month signal)."""
     period = get_period(db, period_id)
     assert_period_open(period)
 
@@ -147,7 +164,12 @@ def sync_from_folder(
         db.scalars(select(Document.stored_path).where(Document.period_id == period_id))
     )
 
-    files = [f for f in folder.iterdir() if f.is_file()]
+    # Only files that belong to this month: those whose leading-month prefix
+    # matches, plus those with no prefix at all.
+    files = [
+        f for f in folder.iterdir()
+        if f.is_file() and _file_month(f.name) in (None, period.month)
+    ]
     new_docs: list[Document] = []
     for f in files:
         rel = f.relative_to(storage.DOCUMENTS_DIR).as_posix()

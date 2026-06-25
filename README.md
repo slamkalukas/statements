@@ -69,6 +69,12 @@ Each month stores its files under `<root>/YYYY/MM/` by default, but that
 subfolder is **editable per month** (e.g. `2026/04-vat`) — changing it affects
 new uploads and folder sync; already-stored files stay where they are.
 
+**Sharing one folder across months:** point several months at the same folder
+and name files with a **leading month** (e.g. `05_shell.pdf`). Sync only picks up
+files whose prefix matches the month, so each month claims just its own files
+with no cross-month duplication. (Files with no month prefix have no month signal,
+so in a shared folder they'd be claimed by every month — prefix them.)
+
 Documents are tagged **invoice**, **receipt**, **bank statement**, or **other**,
 with an optional date/amount/note. Files are written to your mapped folder; the
 database holds the index, the parsed statement lines, the document↔payment links,
