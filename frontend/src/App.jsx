@@ -3,6 +3,7 @@ import Layout from "./components/Layout";
 import { Loading } from "./components/UI";
 import { useAuth } from "./context/AuthContext";
 import Dashboard from "./pages/Dashboard";
+import Files from "./pages/Files";
 import Login from "./pages/Login";
 import PeriodDetail from "./pages/PeriodDetail";
 import Periods from "./pages/Periods";
@@ -21,6 +22,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="periods" element={<Periods />} />
           <Route path="periods/:id" element={<PeriodDetail />} />
+          <Route path="files" element={<Files />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

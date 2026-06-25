@@ -116,6 +116,22 @@ class StorageUpdate(BaseModel):
     host_path: str = Field(max_length=512)
 
 
+# ---- File browser (navigate the documents root) ----
+class FileEntry(BaseModel):
+    name: str
+    path: str          # path relative to the documents root
+    is_dir: bool
+    size_bytes: int = 0
+    child_count: int = 0
+    modified: str | None = None
+
+
+class DirListing(BaseModel):
+    path: str           # current folder, relative to the root ("" = root)
+    parent: str         # parent folder, relative to the root
+    entries: list[FileEntry]
+
+
 # ---- Auto-match (scan documents, pair to transactions) ----
 class AutoMatchRequest(BaseModel):
     rescan: bool = False  # re-read every document, even ones that already have an amount

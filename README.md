@@ -57,6 +57,9 @@ the browser only ever talks to one origin.
 4. **See what's missing.** Each month shows its count of unmatched payments, and
    the dashboard rolls up the total missing across all months — so "which
    invoices am I still missing?" is answered at a glance.
+5. **Browse the files.** The **Files** page is a read-only browser of the
+   documents root — navigate the `YYYY/MM` folders with a breadcrumb and
+   download any file, all confined to the root (no path traversal).
 
 Documents are tagged **invoice**, **receipt**, **bank statement**, or **other**,
 with an optional date/amount/note. Files are written to your mapped folder; the

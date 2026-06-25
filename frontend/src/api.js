@@ -43,20 +43,29 @@ export const api = {
   postForm: (p, formData) => request("POST", p, formData, true),
 };
 
-/** Fetch a document as a blob (with auth) and trigger a browser download. */
-export async function downloadDocument(id, filename) {
+async function downloadBlob(url, filename) {
   const token = getToken();
-  const res = await fetch(`/api/documents/${id}/download`, {
+  const res = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
+  const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
+  a.href = href;
   a.download = filename || "document";
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(href);
+}
+
+/** Fetch a document as a blob (with auth) and trigger a browser download. */
+export async function downloadDocument(id, filename) {
+  await downloadBlob(`/api/documents/${id}/download`, filename);
+}
+
+/** Download any file inside the documents root by its relative path. */
+export async function downloadFile(path, filename) {
+  await downloadBlob(`/api/files/download?path=${encodeURIComponent(path)}`, filename);
 }

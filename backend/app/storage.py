@@ -8,6 +8,7 @@ empty dirs pruned on delete).
 import os
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -137,6 +138,54 @@ def resolve(stored_path: str) -> Path:
     path = (DOCUMENTS_DIR / stored_path).resolve()
     _assert_inside_root(path)
     return path
+
+
+def list_dir(rel: str = "") -> dict:
+    """List one folder inside the documents root for the in-app file browser.
+
+    `rel` is a path relative to the root ("" = root). Returns the normalized
+    path, its parent, and entries (folders first, then files), each with a
+    root-relative path. Stays within the root (path-traversal guard).
+    """
+    rel = (rel or "").strip().strip("/")
+    target = (DOCUMENTS_DIR / rel).resolve() if rel else DOCUMENTS_DIR
+    _assert_inside_root(target)
+
+    if not target.is_dir():
+        if target == DOCUMENTS_DIR:
+            # Root not created yet (nothing uploaded) — show it as empty.
+            return {"path": "", "parent": "", "entries": []}
+        raise FileNotFoundError(rel)
+
+    dirs: list[dict] = []
+    files: list[dict] = []
+    for entry in sorted(target.iterdir(), key=lambda p: p.name.lower()):
+        try:
+            st = entry.stat()
+        except OSError:
+            continue
+        rel_path = entry.relative_to(DOCUMENTS_DIR).as_posix()
+        if entry.is_dir():
+            try:
+                child_count = sum(1 for _ in entry.iterdir())
+            except OSError:
+                child_count = 0
+            dirs.append({"name": entry.name, "path": rel_path, "is_dir": True, "child_count": child_count})
+        elif entry.is_file():
+            files.append({
+                "name": entry.name,
+                "path": rel_path,
+                "is_dir": False,
+                "size_bytes": st.st_size,
+                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+            })
+
+    parent = ""
+    if rel:
+        parent = Path(rel).parent.as_posix()
+        if parent == ".":
+            parent = ""
+    return {"path": rel, "parent": parent, "entries": dirs + files}
 
 
 def delete(stored_path: str) -> None:
