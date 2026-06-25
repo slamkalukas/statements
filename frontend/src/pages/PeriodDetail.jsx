@@ -787,7 +787,7 @@ function DocumentsCard({ period, docs, closed, onUploaded, onDownload, onDelete,
               className="btn btn-secondary"
               onClick={syncFolder}
               disabled={closed || syncing}
-              title={`Register files from this month's folder. Files named with a leading month (e.g. ${String(period.month).padStart(2, "0")}_invoice.pdf) are matched to this month, so several months can share one folder.`}
+              title={`Register files from this month's folder and its subfolders (e.g. a 'hotove' done-folder). Files named with a leading month (e.g. ${String(period.month).padStart(2, "0")}_invoice.pdf) are matched to this month, so several months can share one folder.`}
               style={{ display: "flex", alignItems: "center", gap: 6 }}
             >
               {syncing ? <Spinner /> : <FolderSync size={15} />}

@@ -39,6 +39,41 @@ def test_shared_folder_routes_by_month_prefix(client, auth_headers, storage):
     assert may_names == ["05_alza.txt", "05_shell.txt"]
 
 
+def test_sync_includes_processed_subfolder(client, auth_headers, storage):
+    """Files filed into a subfolder (e.g. "hotove") are still checked."""
+    may = _period(client, auth_headers, 2026, 5)
+    _set_folder(client, auth_headers, may, "Vydavky")
+    base = storage.DOCUMENTS_DIR / "Vydavky"
+    (base / "hotove").mkdir(parents=True, exist_ok=True)
+    (base / "05_open.txt").write_text("x", encoding="utf-8")
+    (base / "hotove" / "05_done.txt").write_text("x", encoding="utf-8")
+
+    client.post(f"/api/periods/{may}/sync", headers=auth_headers)
+    names = sorted(d["original_filename"] for d in _docs(client, auth_headers, may))
+    assert names == ["05_done.txt", "05_open.txt"]  # both the open and processed file
+
+
+def test_sync_follows_a_file_moved_into_hotove(client, auth_headers, storage):
+    """Moving an already-synced file into 'hotove' updates its path, not a dup."""
+    may = _period(client, auth_headers, 2026, 5)
+    _set_folder(client, auth_headers, may, "Vydavky")
+    base = storage.DOCUMENTS_DIR / "Vydavky"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "05_shell.txt").write_text("x", encoding="utf-8")
+
+    client.post(f"/api/periods/{may}/sync", headers=auth_headers)
+    docs = _docs(client, auth_headers, may)
+    assert len(docs) == 1 and docs[0]["original_filename"] == "05_shell.txt"
+
+    # Process it: move the file into hotove/.
+    (base / "hotove").mkdir(exist_ok=True)
+    (base / "05_shell.txt").rename(base / "hotove" / "05_shell.txt")
+
+    client.post(f"/api/periods/{may}/sync", headers=auth_headers)
+    docs2 = _docs(client, auth_headers, may)
+    assert len(docs2) == 1  # not duplicated — the same doc, path now in hotove
+
+
 def test_resync_shared_folder_is_idempotent(client, auth_headers, storage):
     may = _period(client, auth_headers, 2026, 5)
     _set_folder(client, auth_headers, may, "shared")

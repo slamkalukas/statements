@@ -145,13 +145,14 @@ def sync_from_folder(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Scan the month's folder on disk and register any files not yet in the DB.
-    New files are imported as kind='other' so they appear in the Documents list
-    and can be re-typed / linked to statement lines from the UI.
+    """Scan the month's folder (and its subfolders) on disk and register any
+    files not yet in the DB. New files are imported as kind='other' so they
+    appear in the Documents list and can be re-typed / linked from the UI.
 
-    Files named with a leading month (e.g. "05_shell.pdf") are only picked up by
-    that month's sync, so several months can share one folder. Files without a
-    month prefix are taken as-is (the per-month subfolder is the month signal)."""
+    The scan is recursive, so processed files filed into a subfolder (e.g.
+    "hotove") are checked too. Files named with a leading month ("05_shell.pdf")
+    are only picked up by that month's sync, so several months can share one
+    folder; files with no month prefix are taken as-is."""
     period = get_period(db, period_id)
     assert_period_open(period)
 
@@ -159,21 +160,30 @@ def sync_from_folder(
     if not folder.is_dir():
         return SyncResult(scanned=0, imported=0, skipped=0)
 
-    # Relative paths already tracked for this period.
-    existing: set[str] = set(
-        db.scalars(select(Document.stored_path).where(Document.period_id == period_id))
-    )
+    # Existing docs for this month, keyed by filename — so a file moved into a
+    # subfolder (e.g. "hotove") updates its path instead of being duplicated.
+    by_name: dict[str, Document] = {
+        d.stored_path.rsplit("/", 1)[-1]: d
+        for d in db.scalars(select(Document).where(Document.period_id == period_id))
+    }
 
-    # Only files that belong to this month: those whose leading-month prefix
-    # matches, plus those with no prefix at all.
+    # Recurse, keeping only files that belong to this month (leading-month prefix
+    # matches, or no prefix at all).
     files = [
-        f for f in folder.iterdir()
+        f for f in folder.rglob("*")
         if f.is_file() and _file_month(f.name) in (None, period.month)
     ]
     new_docs: list[Document] = []
+    moved = 0
     for f in files:
         rel = f.relative_to(storage.DOCUMENTS_DIR).as_posix()
-        if rel in existing:
+        existing = by_name.get(f.name)
+        if existing is not None:
+            # Already tracked. If its file moved (old path gone, e.g. filed into
+            # "hotove"), follow it so the link/download stays valid.
+            if existing.stored_path != rel and not (storage.DOCUMENTS_DIR / existing.stored_path).exists():
+                existing.stored_path = rel
+                moved += 1
             continue
         mime, _ = mimetypes.guess_type(f.name)
         doc = Document(
@@ -186,6 +196,7 @@ def sync_from_folder(
         )
         db.add(doc)
         new_docs.append(doc)
+        by_name[f.name] = doc
 
     imported = len(new_docs)
     ocr_used = 0
@@ -195,9 +206,10 @@ def sync_from_folder(
         # right away, so dropping files in the folder needs no second step.
         _, ocr_used = matching.scan_documents(db, new_docs)
         matched, _ambiguous, _missing = matching.auto_pair(db, period_id)
+    if new_docs or moved:
         audit.record(
-            db, user, "create", "document", None,
-            f"sync {imported} files from disk (paired {matched})",
+            db, user, "update", "document", None,
+            f"sync: {imported} new, {moved} relocated (paired {matched})",
         )
         db.commit()
 

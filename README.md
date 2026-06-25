@@ -75,6 +75,11 @@ files whose prefix matches the month, so each month claims just its own files
 with no cross-month duplication. (Files with no month prefix have no month signal,
 so in a shared folder they'd be claimed by every month — prefix them.)
 
+**Subfolders are included.** Sync is recursive, so files filed into a subfolder
+(e.g. a `hotove` "done" folder) are still checked. If you move an already-tracked
+file into such a subfolder, sync follows it — its link/download stays valid
+rather than creating a duplicate.
+
 Documents are tagged **invoice**, **receipt**, **bank statement**, or **other**,
 with an optional date/amount/note. Files are written to your mapped folder; the
 database holds the index, the parsed statement lines, the document↔payment links,
