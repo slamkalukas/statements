@@ -13,3 +13,4 @@ pypdf==5.1.0
 pytesseract==0.3.13   # OCR wrapper (needs the tesseract binary, installed in the image)
 pypdfium2==4.30.0     # render PDF pages to images for OCR (bundled native lib, no poppler)
 Pillow==11.0.0        # image handling for OCR
+openpyxl==3.1.5       # generate the travel-report xlsx export

@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import PeriodDetail from "./pages/PeriodDetail";
 import Periods from "./pages/Periods";
 import Settings from "./pages/Settings";
+import Travel from "./pages/Travel";
 
 export default function App() {
   const { user, ready } = useAuth();
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="periods" element={<Periods />} />
           <Route path="periods/:id" element={<PeriodDetail />} />
           <Route path="files" element={<Files />} />
+          <Route path="travel" element={<Travel />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

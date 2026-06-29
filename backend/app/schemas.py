@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Annotated
 
@@ -127,6 +127,56 @@ class StorageInfo(BaseModel):
 class StorageUpdate(BaseModel):
     # The default-folder layout template, e.g. "{YYYY}/{MM}" or "#{YYYY}/Vydavky".
     layout: str = Field(max_length=255)
+
+
+# ---- Travel report (cestovné) ----
+class TravelBase(BaseModel):
+    traveller_name: str = Field(default="", max_length=120)
+    traveller_address: str = Field(default="", max_length=255)
+    trip_date: date
+    from_place: str = Field(default="", max_length=120)
+    to_place: str = Field(default="", max_length=120)
+    purpose: str = Field(default="", max_length=255)
+    depart_time: time | None = None
+    arrive_time: time | None = None
+    return_depart_time: time | None = None
+    return_arrive_time: time | None = None
+    transport: str = Field(default="", max_length=60)
+    per_diem_override: Money | None = None
+
+
+class TravelCreate(TravelBase):
+    pass
+
+
+class TravelUpdate(BaseModel):
+    traveller_name: str | None = Field(default=None, max_length=120)
+    traveller_address: str | None = Field(default=None, max_length=255)
+    trip_date: date | None = None
+    from_place: str | None = Field(default=None, max_length=120)
+    to_place: str | None = Field(default=None, max_length=120)
+    purpose: str | None = Field(default=None, max_length=255)
+    depart_time: time | None = None
+    arrive_time: time | None = None
+    return_depart_time: time | None = None
+    return_arrive_time: time | None = None
+    transport: str | None = Field(default=None, max_length=60)
+    per_diem_override: Money | None = None
+    clear_override: bool = False  # set True to drop a manual per-diem override
+
+
+class TravelOut(TravelBase):
+    id: int
+    period_id: int
+    per_diem: float            # effective (override or computed)
+    per_diem_computed: float   # what the duration-based bands give
+    duration_hours: float | None = None
+
+
+class PerDiemRates(BaseModel):
+    band1: float = Field(ge=0)  # 5–12 h
+    band2: float = Field(ge=0)  # 12–18 h
+    band3: float = Field(ge=0)  # over 18 h
 
 
 # ---- File browser (navigate the documents root) ----

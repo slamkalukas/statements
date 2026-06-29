@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     Boolean,
@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Time,
     UniqueConstraint,
     false,
     func,
@@ -125,6 +126,38 @@ class Document(Base):
     period: Mapped["Period"] = relationship(back_populates="documents")
     # Statement lines this document supports (set on match; cleared on delete).
     lines: Mapped[list["StatementLine"]] = relationship(back_populates="document")
+
+
+class Travel(Base):
+    """One business trip (cestovný príkaz / vyúčtovanie) for a person in a month.
+
+    Each trip is a round trip: depart home -> arrive destination, then depart
+    destination -> arrive home. The per-diem (stravné) is derived from the trip's
+    duration unless overridden. Travellers are free text (no managed people list)."""
+
+    __tablename__ = "travels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    period_id: Mapped[int] = mapped_column(ForeignKey("periods.id"), nullable=False, index=True)
+    traveller_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    traveller_address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    trip_date: Mapped[date] = mapped_column(Date, nullable=False)
+    from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")  # home base
+    to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")    # destination
+    purpose: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)         # odchod (home)
+    arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)         # príchod (dest)
+    return_depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # odchod (dest)
+    return_arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # príchod (home)
+
+    transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    # Manual per-diem override; NULL means "compute from duration".
+    per_diem_override: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    period: Mapped["Period"] = relationship()
 
 
 class Setting(Base):

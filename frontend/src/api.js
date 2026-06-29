@@ -70,3 +70,11 @@ export async function downloadDocument(id, filename) {
 export async function downloadFile(path, filename) {
   await downloadBlob(`/api/files/download?path=${encodeURIComponent(path)}`, filename);
 }
+
+/** Download the travel-report xlsx for a person in a given month. */
+export async function downloadTravelReport(periodId, name) {
+  await downloadBlob(
+    `/api/periods/${periodId}/travels/export?name=${encodeURIComponent(name)}`,
+    `Cestovne_${name}.xlsx`
+  );
+}

@@ -1,4 +1,4 @@
-import { FolderOpen, HardDrive, Save } from "lucide-react";
+import { FolderOpen, HardDrive, Plane, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Spinner, Toast } from "../components/UI";
@@ -16,12 +16,34 @@ export default function Settings() {
   const [layout, setLayout] = useState("");
   const [savingLayout, setSavingLayout] = useState(false);
 
+  const [rates, setRates] = useState(null);
+  const [savingRates, setSavingRates] = useState(false);
+
   useEffect(() => {
     api.get("/storage").then((s) => {
       setStorage(s);
       setLayout(s.layout);
     }).catch(() => {});
+    api.get("/travel/per-diem-rates").then(setRates).catch(() => {});
   }, []);
+
+  async function saveRates(e) {
+    e.preventDefault();
+    setSavingRates(true);
+    try {
+      const saved = await api.patch("/travel/per-diem-rates", {
+        band1: Number(rates.band1), band2: Number(rates.band2), band3: Number(rates.band3),
+      });
+      setRates(saved);
+      setToast("Per-diem rates saved");
+      setTimeout(() => setToast(""), 2200);
+    } catch (err) {
+      setToast("Failed to save: " + err.message);
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setSavingRates(false);
+    }
+  }
 
   async function saveLayout(e) {
     e.preventDefault();
@@ -125,6 +147,43 @@ export default function Settings() {
 
             <div className="doc-meta">Per-file upload limit: {storage.max_upload_mb} MB.</div>
           </div>
+        ) : (
+          <Spinner />
+        )}
+      </div>
+
+      <div className="card card-pad" style={{ maxWidth: 620, marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+          <Plane size={18} /> Travel per-diem rates (Stravné)
+        </h3>
+        <p className="page-sub" style={{ marginBottom: 16 }}>
+          Meal-allowance bands used to auto-calculate a trip's per-diem from its duration.
+        </p>
+        {rates ? (
+          <form onSubmit={saveRates} className="stack" style={{ gap: 12 }}>
+            <div className="row-2">
+              <div className="field">
+                <label>5–12 hours (€)</label>
+                <input type="number" step="0.01" value={rates.band1}
+                       onChange={(e) => setRates({ ...rates, band1: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>12–18 hours (€)</label>
+                <input type="number" step="0.01" value={rates.band2}
+                       onChange={(e) => setRates({ ...rates, band2: e.target.value })} />
+              </div>
+            </div>
+            <div className="field" style={{ maxWidth: 280 }}>
+              <label>Over 18 hours (€)</label>
+              <input type="number" step="0.01" value={rates.band3}
+                     onChange={(e) => setRates({ ...rates, band3: e.target.value })} />
+            </div>
+            <p className="doc-meta">Under 5 hours = no per-diem. A trip can still override the amount individually.</p>
+            <button className="btn btn-secondary" type="submit" disabled={savingRates}
+                    style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: 160 }}>
+              {savingRates ? <Spinner /> : <Save size={14} />} Save rates
+            </button>
+          </form>
         ) : (
           <Spinner />
         )}

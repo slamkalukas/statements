@@ -64,6 +64,12 @@ the browser only ever talks to one origin.
 5. **Browse the files.** The **Files** page is a read-only browser of the
    documents root — navigate the `YYYY/MM` folders with a breadcrumb and
    download any file, all confined to the root (no path traversal).
+6. **Travel report (cestovné).** The **Travel** page records business trips per
+   person, per month (same months as everywhere else). Each trip's per-diem
+   (stravné) is auto-calculated from its duration using configurable Slovak
+   meal-allowance bands (Settings), with a per-trip override. Per person+month
+   you can **export a two-sheet xlsx** — *Cestovný príkaz* + *Vyúčtovanie
+   pracovnej cesty* (VPC) with the SPOLU / PREDDAVOK / DOPLATOK totals.
 
 Each month stores its files under `<root>/YYYY/MM/` by default. The default
 **layout is configurable** in Settings — a template with `{YYYY}`/`{MM}`
