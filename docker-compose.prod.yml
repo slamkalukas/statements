@@ -20,6 +20,10 @@ services:
   db:
     image: postgres:${POSTGRES_VERSION:-16-alpine}
     restart: ${RESTART_POLICY:-always}
+    # Load .env if present (optional, so the stack still runs without one).
+    env_file:
+      - path: .env
+        required: false
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-statements}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a real database password}
@@ -35,6 +39,10 @@ services:
   backend:
     image: ${BACKEND_IMAGE:-slamkalukas/statements-backend:latest}
     restart: ${RESTART_POLICY:-always}
+    # Load .env if present (optional, so the stack still runs without one).
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-statements}:${POSTGRES_PASSWORD:?set a real database password}@db:5432/${POSTGRES_DB:-statements}
       ENV: production
