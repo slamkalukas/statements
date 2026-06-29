@@ -16,6 +16,10 @@ router = APIRouter(prefix="/api/periods", tags=["periods"])
 # A leading month in a filename, e.g. "05_shell.pdf" / "5-foo" / "05.invoice".
 _MONTH_PREFIX = re.compile(r"^(\d{1,2})[ _.\-]")
 
+# Statement-export formats — these are imported as statements, not supporting
+# documents, so folder sync ignores them (they'd otherwise show up as "other").
+_STATEMENT_EXTS = {".xml", ".ofx"}
+
 
 def _file_month(name: str) -> int | None:
     m = _MONTH_PREFIX.match(name)
@@ -168,10 +172,13 @@ def sync_from_folder(
     }
 
     # Recurse, keeping only files that belong to this month (leading-month prefix
-    # matches, or no prefix at all).
+    # matches, or no prefix at all). Statement exports (.xml/.ofx) are skipped —
+    # they're imported as statements, not attached as supporting documents.
     files = [
         f for f in folder.rglob("*")
-        if f.is_file() and _file_month(f.name) in (None, period.month)
+        if f.is_file()
+        and f.suffix.lower() not in _STATEMENT_EXTS
+        and _file_month(f.name) in (None, period.month)
     ]
     new_docs: list[Document] = []
     moved = 0

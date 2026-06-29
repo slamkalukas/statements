@@ -74,6 +74,21 @@ def test_sync_follows_a_file_moved_into_hotove(client, auth_headers, storage):
     assert len(docs2) == 1  # not duplicated — the same doc, path now in hotove
 
 
+def test_sync_skips_statement_exports(client, auth_headers, storage):
+    """XML/OFX statement exports in the folder are not registered as documents."""
+    may = _period(client, auth_headers, 2026, 5)
+    _set_folder(client, auth_headers, may, "Vydavky")
+    base = storage.DOCUMENTS_DIR / "Vydavky"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "05_statement.xml").write_text("<x/>", encoding="utf-8")
+    (base / "05_card.ofx").write_text("<x/>", encoding="utf-8")
+    (base / "05_invoice.pdf").write_text("x", encoding="utf-8")
+
+    client.post(f"/api/periods/{may}/sync", headers=auth_headers)
+    names = sorted(d["original_filename"] for d in _docs(client, auth_headers, may))
+    assert names == ["05_invoice.pdf"]  # the .xml and .ofx exports are ignored
+
+
 def test_resync_shared_folder_is_idempotent(client, auth_headers, storage):
     may = _period(client, auth_headers, 2026, 5)
     _set_folder(client, auth_headers, may, "shared")

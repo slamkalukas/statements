@@ -525,7 +525,9 @@ function NewAccountImport({ periodId, disabled, defaultName = "", placeholder, o
 
 function AttachModal({ line, periodId, documents, onClose, onDone }) {
   const target = Math.abs(line.amount);
-  const unlinked = documents.filter((d) => d.linked_line_count === 0);
+  // Statement files (bank_statement) aren't supporting documents you'd attach to
+  // a payment, so keep them out of the suggestions/other lists.
+  const unlinked = documents.filter((d) => d.linked_line_count === 0 && d.kind !== "bank_statement");
   const suggested = useMemo(
     () => unlinked.filter((d) => d.amount != null && Math.abs(d.amount - target) < 0.005),
     [unlinked, target]
