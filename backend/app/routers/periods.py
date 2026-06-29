@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, matching, storage
+from .. import audit, folders, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, Period, StatementLine, User
@@ -26,7 +26,7 @@ def _file_month(name: str) -> int | None:
     return None
 
 
-def serialize(period: Period) -> PeriodOut:
+def serialize(period: Period, db: Session) -> PeriodOut:
     """Build a PeriodOut with completeness computed from loaded documents and
     statement lines. `missing_count` — outgoing payments with no linked document
     — is the headline number the whole app is about."""
@@ -41,7 +41,7 @@ def serialize(period: Period) -> PeriodOut:
         month=period.month,
         status=period.status,
         note=period.note,
-        folder=period.folder_path,
+        folder=folders.effective_folder(db, period),
         created_at=period.created_at,
         document_count=len(docs),
         has_statement=len(period.lines) > 0,
@@ -62,7 +62,7 @@ def list_periods(
         .options(selectinload(Period.documents), selectinload(Period.lines))
         .order_by(Period.year.desc(), Period.month.desc())
     ).all()
-    return [serialize(p) for p in periods]
+    return [serialize(p, db) for p in periods]
 
 
 @router.post("", response_model=PeriodOut, status_code=201)
@@ -82,7 +82,7 @@ def create_period(
     audit.record(db, user, "create", "period", period.id, f"{payload.year}-{payload.month:02d}")
     db.commit()
     db.refresh(period)
-    return serialize(period)
+    return serialize(period, db)
 
 
 @router.post("/{period_id}/folder", response_model=PeriodOut)
@@ -101,14 +101,14 @@ def set_folder(
         norm = storage.normalize_folder(payload.folder)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid folder path")
-    default = f"{period.year:04d}/{period.month:02d}"
-    # Store None when it's blank or equals the default, so it stays in sync if the
-    # default scheme ever changes.
+    # Store None when it's blank or equals the layout default, so the month keeps
+    # tracking the layout if it changes later.
+    default = folders.default_folder(db, period.year, period.month)
     period.folder = None if (not norm or norm == default) else norm
-    audit.record(db, user, "update", "period", period.id, f"folder={period.folder_path}")
+    audit.record(db, user, "update", "period", period.id, f"folder={folders.effective_folder(db, period)}")
     db.commit()
     db.refresh(period)
-    return serialize(period)
+    return serialize(period, db)
 
 
 @router.post("/{period_id}/close", response_model=PeriodOut)
@@ -122,7 +122,7 @@ def close_period(
     audit.record(db, user, "update", "period", period.id, "close")
     db.commit()
     db.refresh(period)
-    return serialize(period)
+    return serialize(period, db)
 
 
 @router.post("/{period_id}/reopen", response_model=PeriodOut)
@@ -136,7 +136,7 @@ def reopen_period(
     audit.record(db, user, "update", "period", period.id, "reopen")
     db.commit()
     db.refresh(period)
-    return serialize(period)
+    return serialize(period, db)
 
 
 @router.post("/{period_id}/sync", response_model=SyncResult)
@@ -156,7 +156,7 @@ def sync_from_folder(
     period = get_period(db, period_id)
     assert_period_open(period)
 
-    folder = storage.resolve_folder(period.folder_path)
+    folder = storage.resolve_folder(folders.effective_folder(db, period))
     if not folder.is_dir():
         return SyncResult(scanned=0, imported=0, skipped=0)
 

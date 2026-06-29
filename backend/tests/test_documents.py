@@ -53,6 +53,30 @@ def test_custom_folder_changes_upload_location(client, auth_headers, storage):
     assert not (storage.DOCUMENTS_DIR / "2026" / "04" / "bill.pdf").exists()
 
 
+def test_layout_setting_drives_default_folder(client, auth_headers, storage):
+    pid = _period(client, auth_headers, 2030, 3)
+    # Default layout -> YYYY/MM.
+    def folder_of(pid):
+        return next(p for p in client.get("/api/periods", headers=auth_headers).json()
+                    if p["id"] == pid)["folder"]
+    assert folder_of(pid) == "2030/03"
+
+    # Host folder is reported read-only; only the layout is editable.
+    info = client.get("/api/storage", headers=auth_headers).json()
+    assert info["layout"] == "{YYYY}/{MM}"
+    assert info["host_path"]  # present (read-only display)
+
+    r = client.patch("/api/storage", json={"layout": "#{YYYY}/Vydavky"}, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["layout"] == "#{YYYY}/Vydavky"
+
+    # A month without an explicit folder now follows the new layout, and uploads
+    # land there.
+    assert folder_of(pid) == "#2030/Vydavky"
+    _upload(client, auth_headers, pid, name="x.pdf", kind="invoice", content=b"x")
+    assert (storage.DOCUMENTS_DIR / "#2030" / "Vydavky" / "x.pdf").is_file()
+
+
 def test_blank_folder_resets_to_default(client, auth_headers, storage):
     pid = _period(client, auth_headers, 2026, 5)
     client.post(f"/api/periods/{pid}/folder", json={"folder": "custom/x"}, headers=auth_headers)

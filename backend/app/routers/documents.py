@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, extract, storage
+from .. import audit, extract, folders, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, StatementLine, User
@@ -94,7 +94,7 @@ def upload_document(
     parsed_amount = _parse_optional_amount(amount)
 
     try:
-        rel_path, size, original = storage.save_upload(period.folder_path, file)
+        rel_path, size, original = storage.save_upload(folders.effective_folder(db, period), file)
     except storage.UploadTooLarge:
         raise HTTPException(
             status_code=413, detail=f"File too large (limit {storage.MAX_UPLOAD_MB} MB)"

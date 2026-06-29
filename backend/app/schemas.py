@@ -125,7 +125,8 @@ class StorageInfo(BaseModel):
 
 
 class StorageUpdate(BaseModel):
-    host_path: str = Field(max_length=512)
+    # The default-folder layout template, e.g. "{YYYY}/{MM}" or "#{YYYY}/Vydavky".
+    layout: str = Field(max_length=255)
 
 
 # ---- File browser (navigate the documents root) ----

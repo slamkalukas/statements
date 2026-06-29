@@ -44,5 +44,5 @@ def summary(
         no_statement=no_statement,
         months_with_missing=months_with_missing,
         total_missing=total_missing,
-        recent_periods=[serialize_period(p) for p in periods[:6]],
+        recent_periods=[serialize_period(p, db) for p in periods[:6]],
     )

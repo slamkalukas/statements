@@ -13,29 +13,30 @@ export default function Settings() {
   const [toast, setToast] = useState("");
 
   const [storage, setStorage] = useState(null);
-  const [hostPath, setHostPath] = useState("");
-  const [savingPath, setSavingPath] = useState(false);
+  const [layout, setLayout] = useState("");
+  const [savingLayout, setSavingLayout] = useState(false);
 
   useEffect(() => {
     api.get("/storage").then((s) => {
       setStorage(s);
-      setHostPath(s.host_path);
+      setLayout(s.layout);
     }).catch(() => {});
   }, []);
 
-  async function saveHostPath(e) {
+  async function saveLayout(e) {
     e.preventDefault();
-    setSavingPath(true);
+    setSavingLayout(true);
     try {
-      const updated = await api.patch("/storage", { host_path: hostPath });
+      const updated = await api.patch("/storage", { layout });
       setStorage(updated);
-      setToast("Folder path saved");
+      setLayout(updated.layout);
+      setToast("Layout saved");
       setTimeout(() => setToast(""), 2200);
     } catch (err) {
       setToast("Failed to save: " + err.message);
       setTimeout(() => setToast(""), 3000);
     } finally {
-      setSavingPath(false);
+      setSavingLayout(false);
     }
   }
 
@@ -77,45 +78,51 @@ export default function Settings() {
         </p>
         {storage ? (
           <div className="stack" style={{ gap: 16 }}>
-            <form onSubmit={saveHostPath}>
+            <div className="path-row">
+              <div className="label">
+                <HardDrive size={14} /> Host folder
+              </div>
+              <code className="path">{storage.host_path}</code>
+              <span className="doc-meta">
+                Fixed by the <code>DOCUMENTS_DIR_HOST</code> volume mount in docker-compose
+                (restart to change).
+              </span>
+            </div>
+            <div className="path-row">
+              <div className="label">In container</div>
+              <code className="path">{storage.container_path}</code>
+            </div>
+
+            <form onSubmit={saveLayout}>
               <div className="path-row" style={{ alignItems: "flex-end" }}>
-                <div className="label" style={{ flexShrink: 0 }}>
-                  <HardDrive size={14} /> Host folder
-                </div>
+                <div className="label" style={{ flexShrink: 0 }}>Layout</div>
                 <div style={{ flex: 1, display: "flex", gap: 8 }}>
                   <input
                     type="text"
-                    value={hostPath}
-                    onChange={(e) => setHostPath(e.target.value)}
+                    value={layout}
+                    onChange={(e) => setLayout(e.target.value)}
                     style={{ flex: 1, fontFamily: "monospace", fontSize: 13 }}
-                    placeholder="e.g. /mnt/nas/documents or C:/docs"
+                    placeholder="{YYYY}/{MM}"
                   />
                   <button
                     className="btn btn-secondary"
                     type="submit"
-                    disabled={savingPath || hostPath === storage.host_path}
+                    disabled={savingLayout || layout === storage.layout || !layout.trim()}
                     style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}
                   >
-                    {savingPath ? <Spinner /> : <Save size={14} />}
+                    {savingLayout ? <Spinner /> : <Save size={14} />}
                     Save
                   </button>
                 </div>
               </div>
               <p className="doc-meta" style={{ marginTop: 6 }}>
-                Display label only — the actual volume mount is set by{" "}
-                <code>DOCUMENTS_DIR_HOST</code> in docker-compose and requires a restart to change.
+                Default subfolder for each month, under the host folder. Placeholders:{" "}
+                <code>{"{YYYY}"}</code> <code>{"{MM}"}</code> — e.g. <code>{"{YYYY}/{MM}"}</code> →{" "}
+                <code>2026/06</code>, or <code>{"#{YYYY}/Vydavky"}</code>. Affects new uploads and
+                sync for months without a custom folder; files already stored stay put.
               </p>
             </form>
 
-            <div className="path-row">
-              <div className="label">In container</div>
-              <code className="path">{storage.container_path}</code>
-            </div>
-            <div className="path-row">
-              <div className="label">Layout</div>
-              <code className="path">{storage.layout}</code>
-              <span className="doc-meta">Files are filed by year and month, e.g. 2026/06/.</span>
-            </div>
             <div className="doc-meta">Per-file upload limit: {storage.max_upload_mb} MB.</div>
           </div>
         ) : (

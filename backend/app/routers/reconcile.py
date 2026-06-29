@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from .. import audit, matching, storage
+from .. import audit, folders, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Document, Period, StatementLine, User
@@ -126,7 +126,7 @@ async def import_statement(
     try:
         # Rewind so we can persist the bytes we already read.
         rel_path, size, original = storage.save_upload_bytes(
-            period.folder_path, file.filename or "statement", raw
+            folders.effective_folder(db, period), file.filename or "statement", raw
         )
         db.add(
             Document(

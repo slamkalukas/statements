@@ -65,9 +65,13 @@ the browser only ever talks to one origin.
    documents root — navigate the `YYYY/MM` folders with a breadcrumb and
    download any file, all confined to the root (no path traversal).
 
-Each month stores its files under `<root>/YYYY/MM/` by default, but that
-subfolder is **editable per month** (e.g. `2026/04-vat`) — changing it affects
-new uploads and folder sync; already-stored files stay where they are.
+Each month stores its files under `<root>/YYYY/MM/` by default. The default
+**layout is configurable** in Settings — a template with `{YYYY}`/`{MM}`
+placeholders (e.g. `{YYYY}/{MM}` or `#{YYYY}/Vydavky`) that every month follows
+unless it has its own override. The per-month subfolder is also **editable per
+month** (e.g. `2026/04-vat`). Either change affects new uploads and folder sync;
+already-stored files stay where they are. (The host folder itself is read-only —
+it's fixed by the `DOCUMENTS_DIR_HOST` volume mount.)
 
 **Sharing one folder across months:** point several months at the same folder
 and name files with a **leading month** (e.g. `05_shell.pdf`). Sync only picks up
