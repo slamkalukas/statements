@@ -208,6 +208,86 @@ class PerDiemRates(BaseModel):
     band3: float = Field(ge=0)  # over 18 h
 
 
+# ---- Logbook (Kniha jázd) ----
+
+class VehicleBase(BaseModel):
+    ecv: str = Field(max_length=20)
+    vin: str = Field(default="", max_length=20)
+    manufacturer: str = Field(default="", max_length=60)
+    car_model: str = Field(default="", max_length=60)
+    fuel_type: str = Field(default="", max_length=30)
+    consumption: float | None = None
+    fuel_price: float | None = None
+    ownership: str = Field(default="Firemné", max_length=30)
+    date_added: date | None = None
+    active: bool = True
+
+
+class VehicleCreate(VehicleBase):
+    pass
+
+
+class VehicleUpdate(BaseModel):
+    ecv: str | None = Field(default=None, max_length=20)
+    vin: str | None = Field(default=None, max_length=20)
+    manufacturer: str | None = Field(default=None, max_length=60)
+    car_model: str | None = Field(default=None, max_length=60)
+    fuel_type: str | None = Field(default=None, max_length=30)
+    consumption: float | None = None
+    fuel_price: float | None = None
+    ownership: str | None = Field(default=None, max_length=30)
+    date_added: date | None = None
+    active: bool | None = None
+
+
+class VehicleOut(VehicleBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime | None = None
+
+
+class CarTripBase(BaseModel):
+    start_dt: datetime
+    end_dt: datetime | None = None
+    purpose: str = Field(default="", max_length=255)
+    route: str = Field(default="", max_length=1000)
+    odometer_start: int | None = None
+    odometer_end: int | None = None
+    driver_name: str = Field(default="", max_length=120)
+    trip_type: str = Field(default="Firemná", max_length=30)
+    events: str | None = Field(default=None, max_length=255)
+    fuel_price_override: float | None = None
+
+
+class CarTripCreate(CarTripBase):
+    travel_id: int | None = None
+
+
+class CarTripUpdate(BaseModel):
+    start_dt: datetime | None = None
+    end_dt: datetime | None = None
+    purpose: str | None = Field(default=None, max_length=255)
+    route: str | None = Field(default=None, max_length=1000)
+    odometer_start: int | None = None
+    odometer_end: int | None = None
+    driver_name: str | None = Field(default=None, max_length=120)
+    trip_type: str | None = Field(default=None, max_length=30)
+    events: str | None = None
+    fuel_price_override: float | None = None
+    travel_id: int | None = None
+
+
+class CarTripOut(CarTripBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    vehicle_id: int
+    journey_number: int
+    km: int | None = None
+    cost: float | None = None
+    travel_id: int | None = None
+    created_at: datetime | None = None
+
+
 # ---- File browser (navigate the documents root) ----
 class FileEntry(BaseModel):
     name: str

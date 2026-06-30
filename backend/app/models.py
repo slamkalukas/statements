@@ -179,6 +179,55 @@ class TravelLeg(Base):
     travel: Mapped["Travel"] = relationship(back_populates="legs")
 
 
+class Vehicle(Base):
+    """A company car tracked in the logbook."""
+
+    __tablename__ = "vehicles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ecv: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
+    vin: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    manufacturer: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    car_model: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    fuel_type: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+    consumption: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
+    fuel_price: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    ownership: Mapped[str] = mapped_column(String(30), nullable=False, default="Firemné")
+    date_added: Mapped[date | None] = mapped_column(Date, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    trips: Mapped[list["CarTrip"]] = relationship(back_populates="vehicle", cascade="all, delete-orphan")
+
+
+class CarTrip(Base):
+    """One journey entry in the logbook for a vehicle."""
+
+    __tablename__ = "car_trips"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    journey_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_dt: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    end_dt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    purpose: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    route: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    odometer_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    odometer_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    driver_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    trip_type: Mapped[str] = mapped_column(String(30), nullable=False, default="Firemná")
+    events: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    fuel_price_override: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    travel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("travels.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    vehicle: Mapped["Vehicle"] = relationship(back_populates="trips")
+
+
 class Setting(Base):
     """Persistent key-value configuration that can be changed from the UI without
     restarting the container. Env vars provide initial defaults; a saved Setting

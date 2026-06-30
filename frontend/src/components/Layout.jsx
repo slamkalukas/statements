@@ -1,4 +1,4 @@
-import { CalendarDays, FolderTree, LayoutDashboard, LogOut, Menu, Plane, Settings as SettingsIcon } from "lucide-react";
+import { BookOpen, CalendarDays, FolderTree, LayoutDashboard, LogOut, Menu, Plane, Settings as SettingsIcon } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -8,6 +8,7 @@ const NAV = [
   { to: "/periods", label: "Months", icon: CalendarDays },
   { to: "/files", label: "Files", icon: FolderTree },
   { to: "/travel", label: "Travel", icon: Plane },
+  { to: "/logbook", label: "Logbook", icon: BookOpen },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 

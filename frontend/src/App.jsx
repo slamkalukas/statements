@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import PeriodDetail from "./pages/PeriodDetail";
 import Periods from "./pages/Periods";
 import Settings from "./pages/Settings";
+import Logbook from "./pages/Logbook";
 import Travel from "./pages/Travel";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="periods/:id" element={<PeriodDetail />} />
           <Route path="files" element={<Files />} />
           <Route path="travel" element={<Travel />} />
+          <Route path="logbook" element={<Logbook />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
