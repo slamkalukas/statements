@@ -83,7 +83,7 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
     company car transport the function is a no-op (deleting the logbook entry
     on transport change is intentionally avoided to prevent data loss).
     """
-    car_legs = [l for l in travel.legs if "firemn" in (l.transport or "").lower()]
+    car_legs = [l for l in travel.legs if any(k in (l.transport or "").lower() for k in ("firemn", "služobn", "sluzob"))]
     if not car_legs:
         return
 
