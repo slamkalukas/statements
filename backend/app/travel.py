@@ -154,13 +154,12 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     r = 7
     for t in travels:
         end = t.end_date or t.trip_date
-        home = _home_place(t)
-        first_depart = t.legs[0].depart_time if t.legs else None
-        last_arrive = t.legs[-1].arrive_time if t.legs else None
-        s1[f"B{r}"] = f"{_fmt_date(t.trip_date)} {home}, {_fmt_time(first_depart)}".strip(", ")
+        first_leg = t.legs[0] if t.legs else None
+        last_leg = t.legs[-1] if t.legs else None
+        s1[f"B{r}"] = f"{_fmt_date(t.trip_date)} {first_leg.from_place if first_leg else ''}, {_fmt_time(first_leg.depart_time if first_leg else None)}".strip(", ")
         s1[f"C{r}"] = _meeting_places(t)
         s1[f"E{r}"] = t.purpose
-        s1[f"G{r}"] = f"{_fmt_date(end)} {home}, {_fmt_time(last_arrive)}".strip(", ")
+        s1[f"G{r}"] = f"{_fmt_date(end)} {last_leg.to_place if last_leg else ''}, {_fmt_time(last_leg.arrive_time if last_leg else None)}".strip(", ")
         for c in ("B", "C", "E", "G"):
             s1[f"{c}{r}"].border = box
         r += 1
