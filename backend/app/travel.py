@@ -191,8 +191,15 @@ def build_xlsx(name: str, address: str, year: int, month: int,
 
         for i, leg in enumerate(t.legs):
             is_last_leg = (i == len(t.legs) - 1)
-            effective_date = leg.leg_date or t.trip_date
+            # First leg → trip_date; last leg → end_date; middle legs → leg_date or trip_date
+            if i == 0:
+                effective_date = t.trip_date
+            elif is_last_leg:
+                effective_date = end
+            else:
+                effective_date = leg.leg_date or t.trip_date
             leg_date = _fmt_date(effective_date)
+            arrive_date = leg_date
 
             # Row 1: Odchod from_place at depart_time
             s2.cell(r, 2).value = leg_date
@@ -204,13 +211,6 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             r += 1
 
             # Row 2: Príchod to_place at arrive_time — expense/per_diem go here
-            # If leg has explicit leg_date use it; otherwise last leg's Príchod gets end_date
-            if leg.leg_date:
-                arrive_date = leg_date
-            elif is_last_leg and end != t.trip_date:
-                arrive_date = _fmt_date(end)
-            else:
-                arrive_date = leg_date
             s2.cell(r, 2).value = arrive_date
             s2.cell(r, 3).value = f"Príchod {leg.to_place}".strip()
             s2.cell(r, 4).value = _fmt_time(leg.arrive_time)

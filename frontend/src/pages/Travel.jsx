@@ -472,7 +472,7 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
                   >
                     {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
-                  {f.end_date && f.end_date !== f.trip_date && (
+                  {f.end_date && f.end_date !== f.trip_date && !isFirst(idx) && !isLast(idx) && (
                     <input
                       type="date" style={{ width: 140 }}
                       title="Date of this leg"
