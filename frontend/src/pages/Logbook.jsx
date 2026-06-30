@@ -510,7 +510,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
             </select>
           </div>
         </div>
-        <div className="field"><label>Events (Udalosti)</label><input value={f.events} onChange={set("events")} /></div>
+        <div className="field"><label>Details</label><input value={f.events} onChange={set("events")} placeholder="Fuel fill-up, toll, parking…" /></div>
         <button className="btn btn-primary" disabled={busy} onClick={save}>
           {busy ? <Spinner /> : (trip ? "Save changes" : "Add trip")}
         </button>
