@@ -819,6 +819,10 @@ code.path {
   display: none;
 }
 
+.place-suggestion:hover {
+  background: var(--accent-soft, #e8f0fe);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

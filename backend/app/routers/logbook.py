@@ -115,6 +115,38 @@ def route_distance(payload: _RouteIn, user=Depends(get_current_user)):
     cities = _parse_waypoints(payload.route)
     if len(cities) < 2:
         raise HTTPException(400, "Need at least 2 waypoints — separate cities with >")
+
+# ---- Place autocomplete ----
+
+@router.get("/suggest-places")
+def suggest_places(q: str = Query(..., min_length=2), user=Depends(get_current_user)):
+    try:
+        r = httpx.get(
+            _NOMINATIM,
+            params={"q": q, "format": "json", "limit": 7, "addressdetails": 1},
+            headers={"User-Agent": "statements-app/1.0"},
+            timeout=5.0,
+        )
+        results = r.json()
+    except Exception:
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in results:
+        addr = item.get("address", {})
+        city = (
+            addr.get("city") or addr.get("town") or addr.get("village")
+            or addr.get("municipality") or item["display_name"].split(",")[0].strip()
+        )
+        country = addr.get("country", "")
+        label = f"{city}, {country}" if country else city
+        if label not in seen:
+            seen.add(label)
+            out.append(label)
+        if len(out) == 5:
+            break
+    return out
     coords: list[tuple[float, float]] = []
     for city in cities:
         c = _geocode(city)

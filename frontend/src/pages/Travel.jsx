@@ -1,5 +1,5 @@
 import { Copy, Download, Pencil, Plane, Plus, Route, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadTravelReport } from "../api";
 import { EmptyState, Loading, Modal, Spinner, Toast } from "../components/UI";
 import { formatAmount, periodLabel } from "../utils";
@@ -225,6 +225,69 @@ function datesForWeekdays(year, month, picked) {
     dt.setDate(dt.getDate() + 1);
   }
   return out;
+}
+
+function PlaceInput({ value, onChange, readOnly, placeholder, title, style }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const timer = useRef(null);
+
+  function handleChange(e) {
+    const val = e.target.value;
+    onChange(val);
+    clearTimeout(timer.current);
+    if (val.length >= 2) {
+      timer.current = setTimeout(async () => {
+        try {
+          const s = await api.get(`/suggest-places?q=${encodeURIComponent(val)}`);
+          setSuggestions(s);
+          setOpen(s.length > 0);
+        } catch { /* network error — fail silently */ }
+      }, 400);
+    } else {
+      setSuggestions([]);
+      setOpen(false);
+    }
+  }
+
+  function pick(s) {
+    onChange(s);
+    setSuggestions([]);
+    setOpen(false);
+  }
+
+  return (
+    <div style={{ position: "relative", flex: 1, ...style }}>
+      <input
+        value={value}
+        onChange={handleChange}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        readOnly={readOnly}
+        placeholder={placeholder}
+        title={title}
+        style={{ width: "100%" }}
+      />
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
+          background: "var(--surface)", border: "1px solid var(--border)",
+          borderRadius: 6, boxShadow: "0 4px 14px rgba(0,0,0,.15)",
+          overflow: "hidden",
+        }}>
+          {suggestions.map((s, i) => (
+            <div
+              key={i}
+              className="place-suggestion"
+              onMouseDown={() => pick(s)}
+              style={{ padding: "7px 10px", cursor: "pointer", fontSize: 13 }}
+            >
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
@@ -464,22 +527,20 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
                 {/* Route row */}
                 <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                   <span className="doc-meta" style={{ minWidth: 18, fontSize: 11 }}>#{idx + 1}</span>
-                  <input
-                    style={{ flex: 1 }}
-                    placeholder="From"
+                  <PlaceInput
                     value={leg.from_place}
                     readOnly={isFirst(idx) && !trip}
+                    placeholder="From"
                     title={isFirst(idx) ? "Auto-filled from Bydlisko" : undefined}
-                    onChange={(e) => setLeg(idx, "from_place", e.target.value)}
+                    onChange={(val) => setLeg(idx, "from_place", val)}
                   />
                   <span className="doc-meta">→</span>
-                  <input
-                    style={{ flex: 1 }}
-                    placeholder="To"
+                  <PlaceInput
                     value={leg.to_place}
                     readOnly={isLast(idx) && !trip}
+                    placeholder="To"
                     title={isLast(idx) ? "Auto-filled from Bydlisko" : undefined}
-                    onChange={(e) => setLeg(idx, "to_place", e.target.value)}
+                    onChange={(val) => setLeg(idx, "to_place", val)}
                   />
                   {legs.length > 2 && !isFirst(idx) && !isLast(idx) && (
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeLeg(idx)}>
