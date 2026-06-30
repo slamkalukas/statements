@@ -134,6 +134,7 @@ class TravelBase(BaseModel):
     traveller_name: str = Field(default="", max_length=120)
     traveller_address: str = Field(default="", max_length=255)
     trip_date: date
+    end_date: date | None = None  # multi-day trip; None = same day
     from_place: str = Field(default="", max_length=120)
     to_place: str = Field(default="", max_length=120)
     purpose: str = Field(default="", max_length=255)
@@ -149,10 +150,16 @@ class TravelCreate(TravelBase):
     pass
 
 
+class BulkTravelCreate(TravelBase):
+    # Create one trip per date with the same template (regular recurring trips).
+    dates: list[date] = Field(min_length=1, max_length=200)
+
+
 class TravelUpdate(BaseModel):
     traveller_name: str | None = Field(default=None, max_length=120)
     traveller_address: str | None = Field(default=None, max_length=255)
     trip_date: date | None = None
+    end_date: date | None = None
     from_place: str | None = Field(default=None, max_length=120)
     to_place: str | None = Field(default=None, max_length=120)
     purpose: str | None = Field(default=None, max_length=255)

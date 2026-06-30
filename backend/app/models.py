@@ -142,7 +142,8 @@ class Travel(Base):
     traveller_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     traveller_address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
-    trip_date: Mapped[date] = mapped_column(Date, nullable=False)
+    trip_date: Mapped[date] = mapped_column(Date, nullable=False)               # start date
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)          # end date (multi-day); NULL = same day
     from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")  # home base
     to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")    # destination
     purpose: Mapped[str] = mapped_column(String(255), nullable=False, default="")

@@ -1,6 +1,6 @@
 """Travel report: per-diem bands, CRUD, and xlsx export."""
 import io
-from datetime import time
+from datetime import date, time
 from decimal import Decimal
 
 import openpyxl
@@ -8,14 +8,17 @@ import openpyxl
 from app import travel as tv
 
 R = tv.DEFAULT_RATES
+D = date(2026, 7, 1)
 
 
 def test_per_diem_bands():
-    assert tv.computed_per_diem(time(9, 0), time(13, 0), R) == Decimal("0.00")     # 4h < 5h
-    assert tv.computed_per_diem(time(7, 30), time(15, 30), R) == Decimal("8.80")   # 8h
-    assert tv.computed_per_diem(time(7, 30), time(20, 30), R) == Decimal("13.10")  # 13h
-    assert tv.computed_per_diem(time(7, 0), time(6, 0), R) == Decimal("19.50")     # 23h overnight
-    assert tv.computed_per_diem(None, None, R) == Decimal("0.00")
+    assert tv.computed_per_diem(D, time(9, 0), None, time(13, 0), R) == Decimal("0.00")     # 4h
+    assert tv.computed_per_diem(D, time(7, 30), None, time(15, 30), R) == Decimal("8.80")   # 8h
+    assert tv.computed_per_diem(D, time(7, 30), None, time(20, 30), R) == Decimal("13.10")  # 13h
+    assert tv.computed_per_diem(D, time(7, 0), None, time(6, 0), R) == Decimal("19.50")     # 23h overnight
+    assert tv.computed_per_diem(D, None, None, None, R) == Decimal("0.00")
+    # Multi-day: 1 Jul 08:00 -> 2 Jul 18:00 = 34h => 1 full day (19.50) + 10h (8.80).
+    assert tv.computed_per_diem(D, time(8, 0), date(2026, 7, 2), time(18, 0), R) == Decimal("28.30")
 
 
 def _period(client, auth_headers, year=2026, month=7):
@@ -95,6 +98,48 @@ def test_export_xlsx(client, auth_headers):
     total_cells = [c.value for row in vpc.iter_rows() for c in row
                    if isinstance(c.value, (int, float)) and abs(c.value - 21.90) < 0.001]
     assert total_cells, "total 21.90 present"
+
+
+def test_multiday_trip(client, auth_headers):
+    pid = _period(client, auth_headers, month=3)
+    res = _trip(client, auth_headers, pid, trip_date="2026-03-01", end_date="2026-03-02",
+                depart_time="08:00", return_arrive_time="18:00")
+    body = res.json()
+    assert body["end_date"] == "2026-03-02"
+    assert body["per_diem"] == 28.3  # 34h -> 19.50 + 8.80
+
+
+def test_duplicate_trip(client, auth_headers):
+    pid = _period(client, auth_headers, month=4)
+    tid = _trip(client, auth_headers, pid).json()["id"]
+    dup = client.post(f"/api/travels/{tid}/duplicate", headers=auth_headers)
+    assert dup.status_code == 201, dup.text
+    assert dup.json()["id"] != tid
+    assert len(client.get(f"/api/periods/{pid}/travels", headers=auth_headers).json()) == 2
+
+
+def test_bulk_create_trips(client, auth_headers):
+    pid = _period(client, auth_headers, month=5)
+    body = {
+        "traveller_name": "Bulk Person", "traveller_address": "Nitra",
+        "trip_date": "2026-05-05", "from_place": "Nitra", "to_place": "Trnava",
+        "purpose": "Konzultácia", "depart_time": "07:30", "arrive_time": "08:15",
+        "return_depart_time": "14:45", "return_arrive_time": "15:30", "transport": "Vlak",
+        "dates": ["2026-05-05", "2026-05-12", "2026-05-19"],
+    }
+    res = client.post(f"/api/periods/{pid}/travels/bulk", json=body, headers=auth_headers)
+    assert res.status_code == 201, res.text
+    created = res.json()
+    assert len(created) == 3
+    assert sorted(t["trip_date"] for t in created) == ["2026-05-05", "2026-05-12", "2026-05-19"]
+    assert all(t["per_diem"] == 8.8 for t in created)
+
+
+def test_period_with_trips_cannot_be_deleted(client, auth_headers):
+    pid = _period(client, auth_headers, month=6)
+    _trip(client, auth_headers, pid)
+    res = client.delete(f"/api/periods/{pid}", headers=auth_headers)
+    assert res.status_code == 409  # must clear trips first (no FK 500)
 
 
 def test_export_missing_person_404(client, auth_headers):

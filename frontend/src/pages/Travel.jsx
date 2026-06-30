@@ -1,4 +1,4 @@
-import { Download, Pencil, Plane, Plus, Trash2 } from "lucide-react";
+import { Copy, Download, Pencil, Plane, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, downloadTravelReport } from "../api";
 import { EmptyState, Loading, Modal, Spinner, Toast } from "../components/UI";
@@ -50,6 +50,12 @@ export default function Travel() {
     if (!confirm(`Delete the trip ${t.trip_date} (${t.traveller_name})?`)) return;
     await api.del(`/travels/${t.id}`);
     flash("Trip deleted");
+    loadTravels(periodId);
+  }
+
+  async function duplicateTrip(t) {
+    await api.post(`/travels/${t.id}/duplicate`, {});
+    flash("Trip duplicated");
     loadTravels(periodId);
   }
 
@@ -129,7 +135,10 @@ export default function Travel() {
                 <tbody>
                   {trips.map((t) => (
                     <tr key={t.id}>
-                      <td className="num">{t.trip_date}</td>
+                      <td className="num">
+                        {t.trip_date}
+                        {t.end_date && t.end_date !== t.trip_date && <span className="doc-meta"> → {t.end_date}</span>}
+                      </td>
                       <td>{t.from_place} → {t.to_place}</td>
                       <td>{t.purpose}</td>
                       <td className="num">{fmtTimes(t)}</td>
@@ -141,6 +150,9 @@ export default function Travel() {
                       <td className="right">
                         {!closed && (
                           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                            <button className="btn btn-ghost btn-sm" title="Duplicate" onClick={() => duplicateTrip(t)}>
+                              <Copy size={15} />
+                            </button>
                             <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditing(t)}>
                               <Pencil size={15} />
                             </button>
@@ -161,7 +173,7 @@ export default function Travel() {
 
       {editing && period && (
         <TripModal
-          periodId={periodId}
+          period={period}
           trip={editing.id ? editing : null}
           existing={travels || []}
           onClose={() => setEditing(null)}
@@ -179,11 +191,27 @@ function fmtTimes(t) {
   return `${hm(t.depart_time)}–${hm(t.arrive_time)} / ${hm(t.return_depart_time)}–${hm(t.return_arrive_time)}`;
 }
 
-function TripModal({ periodId, trip, existing, onClose, onSaved }) {
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function datesForWeekdays(year, month, picked) {
+  const out = [];
+  const dt = new Date(year, month - 1, 1);
+  const pad = (n) => String(n).padStart(2, "0");
+  while (dt.getMonth() === month - 1) {
+    const idx = (dt.getDay() + 6) % 7; // Mon=0 … Sun=6
+    if (picked[idx]) out.push(`${year}-${pad(month)}-${pad(dt.getDate())}`);
+    dt.setDate(dt.getDate() + 1);
+  }
+  return out;
+}
+
+function TripModal({ period, trip, existing, onClose, onSaved }) {
+  const periodId = period.id;
   const [f, setF] = useState(() => ({
     traveller_name: trip?.traveller_name || "",
     traveller_address: trip?.traveller_address || "",
     trip_date: trip?.trip_date || "",
+    end_date: trip?.end_date || "",
     from_place: trip?.from_place || "",
     to_place: trip?.to_place || "",
     purpose: trip?.purpose || "",
@@ -194,9 +222,16 @@ function TripModal({ periodId, trip, existing, onClose, onSaved }) {
     transport: trip?.transport || "Auto služobné",
     per_diem_override: trip?.per_diem_override != null ? String(trip.per_diem_override) : "",
   }));
+  const [repeat, setRepeat] = useState(false);
+  const [weekdays, setWeekdays] = useState([false, false, false, false, false, false, false]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+
+  const repeatDates = useMemo(
+    () => (repeat ? datesForWeekdays(period.year, period.month, weekdays) : []),
+    [repeat, weekdays, period.year, period.month]
+  );
 
   // Prefill the home address from an earlier trip by the same traveller.
   function onNameBlur() {
@@ -205,17 +240,10 @@ function TripModal({ periodId, trip, existing, onClose, onSaved }) {
     if (match) setF((s) => ({ ...s, traveller_address: match.traveller_address }));
   }
 
-  async function save() {
-    if (!f.traveller_name.trim() || !f.trip_date) {
-      setError("Traveller name and date are required.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    const body = {
+  function template() {
+    return {
       traveller_name: f.traveller_name.trim(),
       traveller_address: f.traveller_address.trim(),
-      trip_date: f.trip_date,
       from_place: f.from_place.trim(),
       to_place: f.to_place.trim(),
       purpose: f.purpose.trim(),
@@ -226,7 +254,34 @@ function TripModal({ periodId, trip, existing, onClose, onSaved }) {
       transport: f.transport.trim(),
       per_diem_override: f.per_diem_override === "" ? null : Number(f.per_diem_override),
     };
+  }
+
+  async function save() {
+    if (!f.traveller_name.trim()) {
+      setError("Traveller name is required.");
+      return;
+    }
+    setBusy(true);
+    setError("");
     try {
+      if (!trip && repeat) {
+        if (repeatDates.length === 0) {
+          setError("Pick at least one weekday to repeat on.");
+          setBusy(false);
+          return;
+        }
+        await api.post(`/periods/${periodId}/travels/bulk`, {
+          ...template(), trip_date: repeatDates[0], dates: repeatDates,
+        });
+        onSaved(`Added ${repeatDates.length} trips`);
+        return;
+      }
+      if (!f.trip_date) {
+        setError("Date is required.");
+        setBusy(false);
+        return;
+      }
+      const body = { ...template(), trip_date: f.trip_date, end_date: f.end_date || null };
       if (trip) await api.patch(`/travels/${trip.id}`, body);
       else await api.post(`/periods/${periodId}/travels`, body);
       onSaved(trip ? "Trip updated" : "Trip added");
@@ -250,17 +305,26 @@ function TripModal({ periodId, trip, existing, onClose, onSaved }) {
             <input value={f.traveller_address} onChange={set("traveller_address")} />
           </div>
         </div>
-        <div className="row-2">
-          <div className="field">
-            <label>Date</label>
-            <input type="date" value={f.trip_date} onChange={set("trip_date")} />
+        {!repeat && (
+          <div className="row-2">
+            <div className="field">
+              <label>Start date</label>
+              <input type="date" value={f.trip_date} onChange={set("trip_date")} />
+            </div>
+            <div className="field">
+              <label>End date (multi-day, optional)</label>
+              <input type="date" value={f.end_date} onChange={set("end_date")} min={f.trip_date || undefined} />
+            </div>
           </div>
+        )}
+        <div className="row-2">
           <div className="field">
             <label>Transport</label>
             <select value={f.transport} onChange={set("transport")}>
               {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
             </select>
           </div>
+          <div className="field" />
         </div>
         <div className="row-2">
           <div className="field">
@@ -302,8 +366,37 @@ function TripModal({ periodId, trip, existing, onClose, onSaved }) {
                  placeholder="auto from duration" />
           <span className="doc-meta">Leave blank to auto-calculate from the trip duration.</span>
         </div>
+
+        {!trip && (
+          <div className="field">
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} style={{ width: "auto" }} />
+              Repeat — create the same trip on chosen weekdays of {periodLabel(period.year, period.month)}
+            </label>
+            {repeat && (
+              <>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                  {WEEKDAYS.map((d, i) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={`btn btn-sm ${weekdays[i] ? "btn-accent" : "btn-ghost"}`}
+                      onClick={() => setWeekdays((w) => w.map((v, j) => (j === i ? !v : v)))}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+                <span className="doc-meta" style={{ marginTop: 6 }}>
+                  {repeatDates.length} trip{repeatDates.length === 1 ? "" : "s"} will be created.
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
         <button className="btn btn-primary" disabled={busy} onClick={save}>
-          {busy ? <Spinner /> : (trip ? "Save changes" : "Add trip")}
+          {busy ? <Spinner /> : (trip ? "Save changes" : (repeat ? `Add ${repeatDates.length} trips` : "Add trip"))}
         </button>
       </div>
     </Modal>

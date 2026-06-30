@@ -45,35 +45,49 @@ def set_rates(db, rates: dict) -> dict:
     return clean
 
 
-def duration_hours(depart: time | None, arrive_home: time | None) -> float | None:
-    """Trip length in hours from departure to arrival home (handles overnight)."""
+def duration_hours(date_from: date, depart: time | None,
+                   date_to: date | None, arrive_home: time | None) -> float | None:
+    """Trip length in hours from departure to arrival home, spanning the trip's
+    start/end dates (multi-day) and handling an overnight when no end date is set."""
     if depart is None or arrive_home is None:
         return None
+    end = date_to or date_from
+    span_days = (end - date_from).days
     d = depart.hour * 60 + depart.minute
     a = arrive_home.hour * 60 + arrive_home.minute
-    if a <= d:  # arrived after midnight
-        a += 24 * 60
-    return (a - d) / 60.0
+    total = span_days * 24 * 60 + (a - d)
+    if total <= 0:  # same-day entry that crosses midnight
+        total += 24 * 60
+    return total / 60.0
 
 
-def computed_per_diem(depart: time | None, arrive_home: time | None, rates: dict) -> Decimal:
-    """Per-diem from trip duration using the configured bands."""
-    h = duration_hours(depart, arrive_home)
-    if h is None or h < 5:
-        amount = 0.0
-    elif h <= 12:
-        amount = rates["band1"]
-    elif h <= 18:
-        amount = rates["band2"]
-    else:
-        amount = rates["band3"]
+def _band_amount(hours: float, rates: dict) -> float:
+    if hours < 5:
+        return 0.0
+    if hours <= 12:
+        return rates["band1"]
+    if hours <= 18:
+        return rates["band2"]
+    return rates["band3"]
+
+
+def computed_per_diem(date_from: date, depart: time | None,
+                      date_to: date | None, arrive_home: time | None, rates: dict) -> Decimal:
+    """Per-diem from trip duration using the configured bands. For multi-day trips
+    each full 24h counts as a whole-day allowance (band3) plus the remainder by band."""
+    h = duration_hours(date_from, depart, date_to, arrive_home)
+    if h is None:
+        return Decimal("0.00")
+    full_days = int(h // 24)
+    remainder = h - full_days * 24
+    amount = full_days * rates["band3"] + _band_amount(remainder, rates)
     return Decimal(str(amount)).quantize(Decimal("0.01"))
 
 
 def effective_per_diem(t: Travel, rates: dict) -> Decimal:
     if t.per_diem_override is not None:
         return Decimal(t.per_diem_override).quantize(Decimal("0.01"))
-    return computed_per_diem(t.depart_time, t.return_arrive_time, rates)
+    return computed_per_diem(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time, rates)
 
 
 def _fmt_date(d: date) -> str:
@@ -115,10 +129,11 @@ def build_xlsx(name: str, address: str, year: int, month: int,
         s1[c].font = bold
     r = 7
     for t in travels:
+        end = t.end_date or t.trip_date
         s1[f"B{r}"] = f"{_fmt_date(t.trip_date)} {t.from_place}, {_fmt_time(t.depart_time)}".strip()
         s1[f"C{r}"] = t.to_place
         s1[f"E{r}"] = t.purpose
-        s1[f"G{r}"] = f"{_fmt_date(t.trip_date)} {t.from_place}, {_fmt_time(t.return_arrive_time)}".strip()
+        s1[f"G{r}"] = f"{_fmt_date(end)} {t.from_place}, {_fmt_time(t.return_arrive_time)}".strip()
         for c in ("B", "C", "E", "G"):
             s1[f"{c}{r}"].border = box
         r += 1
@@ -141,14 +156,16 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     for t in travels:
         pd = effective_per_diem(t, rates)
         total += pd
+        end = t.end_date or t.trip_date
+        # Outbound legs on the start date; return legs on the end date.
         legs = [
-            (f"Odchod {t.from_place}".strip(), t.depart_time, None),
-            (f"Príchod {t.to_place}".strip(), t.arrive_time, None),
-            (f"Odchod {t.to_place}".strip(), t.return_depart_time, None),
-            (f"Príchod {t.from_place}".strip(), t.return_arrive_time, float(pd)),
+            (t.trip_date, f"Odchod {t.from_place}".strip(), t.depart_time, None),
+            (t.trip_date, f"Príchod {t.to_place}".strip(), t.arrive_time, None),
+            (end, f"Odchod {t.to_place}".strip(), t.return_depart_time, None),
+            (end, f"Príchod {t.from_place}".strip(), t.return_arrive_time, float(pd)),
         ]
-        for label, tm, amount in legs:
-            s2[f"B{r}"] = _fmt_date(t.trip_date)
+        for leg_date, label, tm, amount in legs:
+            s2[f"B{r}"] = _fmt_date(leg_date)
             s2[f"C{r}"] = label
             s2[f"D{r}"] = _fmt_time(tm)
             s2[f"E{r}"] = t.transport

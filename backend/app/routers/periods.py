@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from .. import audit, folders, matching, storage
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
-from ..models import Document, Period, StatementLine, User
+from ..models import Document, Period, StatementLine, Travel, User
 from ..schemas import PeriodCreate, PeriodFolderUpdate, PeriodOut, SyncResult
 
 router = APIRouter(prefix="/api/periods", tags=["periods"])
@@ -239,10 +239,13 @@ def delete_period(
     has_lines = db.scalar(
         select(func.count()).select_from(StatementLine).where(StatementLine.period_id == period.id)
     )
-    if has_docs or has_lines:
+    has_travels = db.scalar(
+        select(func.count()).select_from(Travel).where(Travel.period_id == period.id)
+    )
+    if has_docs or has_lines or has_travels:
         raise HTTPException(
             status_code=409,
-            detail="Clear the month's documents and statement first, then remove it.",
+            detail="Clear the month's documents, statement and travel first, then remove it.",
         )
     audit.record(db, user, "delete", "period", period.id, f"{period.year}-{period.month:02d}")
     db.delete(period)

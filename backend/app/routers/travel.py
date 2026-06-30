@@ -8,7 +8,7 @@ from .. import audit, travel
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Travel, User
-from ..schemas import PerDiemRates, TravelCreate, TravelOut, TravelUpdate
+from ..schemas import BulkTravelCreate, PerDiemRates, TravelCreate, TravelOut, TravelUpdate
 
 router = APIRouter(prefix="/api", tags=["travel"])
 
@@ -17,13 +17,14 @@ _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 def serialize(t: Travel, rates: dict) -> TravelOut:
     pd = travel.effective_per_diem(t, rates)
-    comp = travel.computed_per_diem(t.depart_time, t.return_arrive_time, rates)
+    comp = travel.computed_per_diem(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time, rates)
     return TravelOut(
         id=t.id,
         period_id=t.period_id,
         traveller_name=t.traveller_name,
         traveller_address=t.traveller_address,
         trip_date=t.trip_date,
+        end_date=t.end_date,
         from_place=t.from_place,
         to_place=t.to_place,
         purpose=t.purpose,
@@ -35,7 +36,7 @@ def serialize(t: Travel, rates: dict) -> TravelOut:
         per_diem_override=t.per_diem_override,
         per_diem=float(pd),
         per_diem_computed=float(comp),
-        duration_hours=travel.duration_hours(t.depart_time, t.return_arrive_time),
+        duration_hours=travel.duration_hours(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time),
     )
 
 
@@ -105,6 +106,66 @@ def create_travel(
     db.commit()
     db.refresh(t)
     return serialize(t, travel.get_rates(db))
+
+
+_TEMPLATE_FIELDS = (
+    "traveller_name", "traveller_address", "from_place", "to_place", "purpose",
+    "depart_time", "arrive_time", "return_depart_time", "return_arrive_time",
+    "transport", "per_diem_override",
+)
+
+
+@router.post("/periods/{period_id}/travels/bulk", response_model=list[TravelOut], status_code=201)
+def bulk_create_travels(
+    period_id: int,
+    payload: BulkTravelCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create one trip per date from a shared template — for regular recurring trips."""
+    period = get_period(db, period_id)
+    assert_period_open(period)
+    template = payload.model_dump(include=set(_TEMPLATE_FIELDS))
+    created: list[Travel] = []
+    for d in sorted(set(payload.dates)):
+        t = Travel(period_id=period_id, trip_date=d, end_date=None, **template)
+        db.add(t)
+        created.append(t)
+    db.flush()
+    audit.record(db, user, "create", "travel", None, f"bulk {len(created)} trips ({payload.traveller_name})")
+    db.commit()
+    rates = travel.get_rates(db)
+    for t in created:
+        db.refresh(t)
+    return [serialize(t, rates) for t in created]
+
+
+@router.post("/travels/{travel_id}/duplicate", response_model=TravelOut, status_code=201)
+def duplicate_travel(
+    travel_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Clone a trip (same month) so a near-identical trip can be tweaked."""
+    src = db.get(Travel, travel_id)
+    if src is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    assert_period_open(get_period(db, src.period_id))
+    clone = Travel(
+        period_id=src.period_id,
+        traveller_name=src.traveller_name, traveller_address=src.traveller_address,
+        trip_date=src.trip_date, end_date=src.end_date,
+        from_place=src.from_place, to_place=src.to_place, purpose=src.purpose,
+        depart_time=src.depart_time, arrive_time=src.arrive_time,
+        return_depart_time=src.return_depart_time, return_arrive_time=src.return_arrive_time,
+        transport=src.transport, per_diem_override=src.per_diem_override,
+    )
+    db.add(clone)
+    db.flush()
+    audit.record(db, user, "create", "travel", clone.id, f"duplicate of {src.id}")
+    db.commit()
+    db.refresh(clone)
+    return serialize(clone, travel.get_rates(db))
 
 
 @router.patch("/travels/{travel_id}", response_model=TravelOut)
