@@ -131,9 +131,8 @@ class Document(Base):
 class Travel(Base):
     """One business trip (cestovný príkaz / vyúčtovanie) for a person in a month.
 
-    Each trip is a round trip: depart home -> arrive destination, then depart
-    destination -> arrive home. The per-diem (stravné) is derived from the trip's
-    duration unless overridden. Travellers are free text (no managed people list)."""
+    The trip header holds traveller info, dates, purpose and overall times
+    (used for per-diem duration fallback). Route stops are in TravelLeg rows."""
 
     __tablename__ = "travels"
 
@@ -142,26 +141,45 @@ class Travel(Base):
     traveller_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     traveller_address: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
-    trip_date: Mapped[date] = mapped_column(Date, nullable=False)               # start date
-    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)          # end date (multi-day); NULL = same day
-    from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")  # home base
-    to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")    # destination
+    trip_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     purpose: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
-    depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)         # odchod (home)
-    arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)         # príchod (dest)
-    return_depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # odchod (dest)
-    return_arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # príchod (home)
+    depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    return_depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    return_arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
 
-    transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")
-    # Manual per-diem override; NULL means "compute from duration".
-    per_diem_override: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    # Routing (OpenRouteService): one-way km and travel time rounded to 20 min. NULL = not yet routed.
-    distance_km: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
-    duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     period: Mapped["Period"] = relationship()
+    legs: Mapped[list["TravelLeg"]] = relationship(
+        back_populates="travel", cascade="all, delete-orphan",
+        order_by="TravelLeg.order_idx",
+    )
+
+
+class TravelLeg(Base):
+    """One leg of a business trip: a single from→to segment with its own transport,
+    optional routing data, reimbursable expense, and per-diem (stravné) portion."""
+
+    __tablename__ = "travel_legs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    travel_id: Mapped[int] = mapped_column(
+        ForeignKey("travels.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    order_idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    leg_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    distance_km: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expense: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    per_diem: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+
+    travel: Mapped["Travel"] = relationship(back_populates="legs")
 
 
 class Setting(Base):

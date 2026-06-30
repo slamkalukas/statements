@@ -5,20 +5,42 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit, routing, travel
+from .. import audit, routing, travel as travel_module
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
-from ..models import Travel, User
-from ..schemas import BulkTravelCreate, PerDiemRates, TravelCreate, TravelOut, TravelUpdate
+from ..models import Travel, TravelLeg, User
+from ..schemas import (
+    BulkTravelCreate, PerDiemRates, TravelCreate, TravelLegCreate,
+    TravelLegOut, TravelLegUpdate, TravelOut, TravelUpdate,
+)
 
 router = APIRouter(prefix="/api", tags=["travel"])
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
+def _leg_out(leg: TravelLeg) -> TravelLegOut:
+    return TravelLegOut(
+        id=leg.id,
+        travel_id=leg.travel_id,
+        order_idx=leg.order_idx,
+        from_place=leg.from_place,
+        to_place=leg.to_place,
+        transport=leg.transport,
+        leg_time=leg.leg_time,
+        distance_km=float(leg.distance_km) if leg.distance_km is not None else None,
+        duration_min=leg.duration_min,
+        expense=float(leg.expense) if leg.expense is not None else None,
+        per_diem=float(leg.per_diem) if leg.per_diem is not None else None,
+    )
+
+
 def serialize(t: Travel, rates: dict) -> TravelOut:
-    pd = travel.effective_per_diem(t, rates)
-    comp = travel.computed_per_diem(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time, rates)
+    pd = travel_module.effective_per_diem(t, rates)
+    comp = travel_module.computed_per_diem(
+        t.trip_date, t.depart_time, t.end_date, t.return_arrive_time, rates
+    )
+    km_list = [float(leg.distance_km) for leg in t.legs if leg.distance_km is not None]
     return TravelOut(
         id=t.id,
         period_id=t.period_id,
@@ -26,22 +48,52 @@ def serialize(t: Travel, rates: dict) -> TravelOut:
         traveller_address=t.traveller_address,
         trip_date=t.trip_date,
         end_date=t.end_date,
-        from_place=t.from_place,
-        to_place=t.to_place,
         purpose=t.purpose,
         depart_time=t.depart_time,
         arrive_time=t.arrive_time,
         return_depart_time=t.return_depart_time,
         return_arrive_time=t.return_arrive_time,
-        transport=t.transport,
-        per_diem_override=t.per_diem_override,
         per_diem=float(pd),
         per_diem_computed=float(comp),
-        duration_hours=travel.duration_hours(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time),
-        distance_km=float(t.distance_km) if t.distance_km is not None else None,
-        duration_min=t.duration_min,
+        duration_hours=travel_module.duration_hours(
+            t.trip_date, t.depart_time, t.end_date, t.return_arrive_time
+        ),
+        total_km=round(sum(km_list), 2) if km_list else None,
+        legs=[_leg_out(leg) for leg in t.legs],
     )
 
+
+def _create_legs(db: Session, travel_id: int, legs: list[TravelLegCreate]) -> None:
+    for i, leg_data in enumerate(legs):
+        data = leg_data.model_dump()
+        if "order_idx" not in data or data["order_idx"] == 0:
+            data["order_idx"] = i
+        leg = TravelLeg(travel_id=travel_id, **data)
+        db.add(leg)
+        db.flush()
+        routing.auto_route(db, leg)
+
+
+# ---- Per-diem rates ----
+
+@router.get("/travel/per-diem-rates", response_model=PerDiemRates)
+def get_per_diem_rates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return PerDiemRates(**travel_module.get_rates(db))
+
+
+@router.patch("/travel/per-diem-rates", response_model=PerDiemRates)
+def set_per_diem_rates(
+    body: PerDiemRates,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    saved = travel_module.set_rates(db, body.model_dump())
+    audit.record(db, user, "update", "setting", None, "per-diem rates")
+    db.commit()
+    return PerDiemRates(**saved)
+
+
+# ---- Routing key ----
 
 class RoutingKeyStatus(BaseModel):
     configured: bool
@@ -53,9 +105,7 @@ class RoutingKeyUpdate(BaseModel):
 
 @router.get("/travel/routing-key", response_model=RoutingKeyStatus)
 def get_routing_key_status(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Returns whether an ORS API key is saved — never echoes the key itself."""
-    key = routing.get_api_key(db)
-    return RoutingKeyStatus(configured=key is not None)
+    return RoutingKeyStatus(configured=routing.get_api_key(db) is not None)
 
 
 @router.patch("/travel/routing-key", response_model=RoutingKeyStatus)
@@ -72,22 +122,7 @@ def set_routing_key(
     return RoutingKeyStatus(configured=True)
 
 
-@router.get("/travel/per-diem-rates", response_model=PerDiemRates)
-def get_per_diem_rates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return PerDiemRates(**travel.get_rates(db))
-
-
-@router.patch("/travel/per-diem-rates", response_model=PerDiemRates)
-def set_per_diem_rates(
-    body: PerDiemRates,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    saved = travel.set_rates(db, body.model_dump())
-    audit.record(db, user, "update", "setting", None, "per-diem rates")
-    db.commit()
-    return PerDiemRates(**saved)
-
+# ---- Trips ----
 
 @router.get("/periods/{period_id}/travels", response_model=list[TravelOut])
 def list_travels(
@@ -101,7 +136,7 @@ def list_travels(
     if name:
         stmt = stmt.where(Travel.traveller_name == name)
     stmt = stmt.order_by(Travel.traveller_name, Travel.trip_date, Travel.id)
-    rates = travel.get_rates(db)
+    rates = travel_module.get_rates(db)
     return [serialize(t, rates) for t in db.scalars(stmt)]
 
 
@@ -111,7 +146,6 @@ def list_travel_names(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Distinct traveller names in this month (for the export picker)."""
     get_period(db, period_id)
     rows = db.scalars(
         select(Travel.traveller_name)
@@ -131,21 +165,14 @@ def create_travel(
 ):
     period = get_period(db, period_id)
     assert_period_open(period)
-    t = Travel(period_id=period_id, **payload.model_dump())
+    t = Travel(period_id=period_id, **payload.model_dump(exclude={"legs"}))
     db.add(t)
     db.flush()
-    routing.auto_route(db, t)
+    _create_legs(db, t.id, payload.legs)
     audit.record(db, user, "create", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel.get_rates(db))
-
-
-_TEMPLATE_FIELDS = (
-    "traveller_name", "traveller_address", "from_place", "to_place", "purpose",
-    "depart_time", "arrive_time", "return_depart_time", "return_arrive_time",
-    "transport", "per_diem_override",
-)
+    return serialize(t, travel_module.get_rates(db))
 
 
 @router.post("/periods/{period_id}/travels/bulk", response_model=list[TravelOut], status_code=201)
@@ -155,19 +182,21 @@ def bulk_create_travels(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Create one trip per date from a shared template — for regular recurring trips."""
     period = get_period(db, period_id)
     assert_period_open(period)
-    template = payload.model_dump(include=set(_TEMPLATE_FIELDS))
+    header = payload.model_dump(exclude={"legs", "dates"})
     created: list[Travel] = []
     for d in sorted(set(payload.dates)):
-        t = Travel(period_id=period_id, trip_date=d, end_date=None, **template)
+        t = Travel(period_id=period_id, trip_date=d, end_date=None, **{k: v for k, v in header.items() if k != "trip_date"})
         db.add(t)
         created.append(t)
     db.flush()
-    audit.record(db, user, "create", "travel", None, f"bulk {len(created)} trips ({payload.traveller_name})")
+    for t in created:
+        _create_legs(db, t.id, payload.legs)
+    audit.record(db, user, "create", "travel", None,
+                 f"bulk {len(created)} trips ({payload.traveller_name})")
     db.commit()
-    rates = travel.get_rates(db)
+    rates = travel_module.get_rates(db)
     for t in created:
         db.refresh(t)
     return [serialize(t, rates) for t in created]
@@ -179,7 +208,6 @@ def duplicate_travel(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Clone a trip (same month) so a near-identical trip can be tweaked."""
     src = db.get(Travel, travel_id)
     if src is None:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -187,18 +215,23 @@ def duplicate_travel(
     clone = Travel(
         period_id=src.period_id,
         traveller_name=src.traveller_name, traveller_address=src.traveller_address,
-        trip_date=src.trip_date, end_date=src.end_date,
-        from_place=src.from_place, to_place=src.to_place, purpose=src.purpose,
+        trip_date=src.trip_date, end_date=src.end_date, purpose=src.purpose,
         depart_time=src.depart_time, arrive_time=src.arrive_time,
         return_depart_time=src.return_depart_time, return_arrive_time=src.return_arrive_time,
-        transport=src.transport, per_diem_override=src.per_diem_override,
     )
     db.add(clone)
     db.flush()
+    for leg in src.legs:
+        db.add(TravelLeg(
+            travel_id=clone.id, order_idx=leg.order_idx,
+            from_place=leg.from_place, to_place=leg.to_place, transport=leg.transport,
+            leg_time=leg.leg_time, distance_km=leg.distance_km, duration_min=leg.duration_min,
+            expense=leg.expense, per_diem=leg.per_diem,
+        ))
     audit.record(db, user, "create", "travel", clone.id, f"duplicate of {src.id}")
     db.commit()
     db.refresh(clone)
-    return serialize(clone, travel.get_rates(db))
+    return serialize(clone, travel_module.get_rates(db))
 
 
 @router.patch("/travels/{travel_id}", response_model=TravelOut)
@@ -212,20 +245,12 @@ def update_travel(
     if t is None:
         raise HTTPException(status_code=404, detail="Trip not found")
     assert_period_open(get_period(db, t.period_id))
-    data = payload.model_dump(exclude_unset=True)
-    clear = data.pop("clear_override", False)
-    old_route = (t.from_place, t.to_place)
-    for key, value in data.items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(t, key, value)
-    if clear:
-        t.per_diem_override = None
-    # Re-route if places changed
-    if (t.from_place, t.to_place) != old_route:
-        routing.auto_route(db, t)
     audit.record(db, user, "update", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel.get_rates(db))
+    return serialize(t, travel_module.get_rates(db))
 
 
 @router.delete("/travels/{travel_id}", status_code=204)
@@ -243,25 +268,94 @@ def delete_travel(
     db.commit()
 
 
-@router.post("/travels/{travel_id}/route", response_model=TravelOut)
-def recalculate_route(
+# ---- Legs ----
+
+def _get_leg_and_trip(leg_id: int, db: Session) -> tuple[TravelLeg, Travel]:
+    leg = db.get(TravelLeg, leg_id)
+    if leg is None:
+        raise HTTPException(status_code=404, detail="Leg not found")
+    t = db.get(Travel, leg.travel_id)
+    return leg, t
+
+
+@router.post("/travels/{travel_id}/legs", response_model=TravelOut, status_code=201)
+def add_leg(
     travel_id: int,
+    payload: TravelLegCreate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Manually trigger ORS routing for a single trip."""
     t = db.get(Travel, travel_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Trip not found")
-    if not routing.get_api_key(db):
-        raise HTTPException(status_code=422, detail="No routing API key configured")
-    updated = routing.auto_route(db, t)
-    if not updated:
-        raise HTTPException(status_code=422, detail="Could not calculate route — check from/to place names")
+    assert_period_open(get_period(db, t.period_id))
+    next_idx = max((leg.order_idx for leg in t.legs), default=-1) + 1
+    data = payload.model_dump()
+    data.setdefault("order_idx", next_idx)
+    leg = TravelLeg(travel_id=travel_id, **data)
+    db.add(leg)
+    db.flush()
+    routing.auto_route(db, leg)
+    audit.record(db, user, "create", "travel_leg", leg.id,
+                 f"{leg.from_place}→{leg.to_place} (trip {travel_id})")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel.get_rates(db))
+    return serialize(t, travel_module.get_rates(db))
 
+
+@router.patch("/travel-legs/{leg_id}", response_model=TravelOut)
+def update_leg(
+    leg_id: int,
+    payload: TravelLegUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    leg, t = _get_leg_and_trip(leg_id, db)
+    assert_period_open(get_period(db, t.period_id))
+    old_route = (leg.from_place, leg.to_place, leg.transport)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(leg, key, value)
+    if (leg.from_place, leg.to_place, leg.transport) != old_route:
+        routing.auto_route(db, leg)
+    db.commit()
+    db.refresh(t)
+    return serialize(t, travel_module.get_rates(db))
+
+
+@router.delete("/travel-legs/{leg_id}", response_model=TravelOut)
+def delete_leg(
+    leg_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    leg, t = _get_leg_and_trip(leg_id, db)
+    assert_period_open(get_period(db, t.period_id))
+    db.delete(leg)
+    db.commit()
+    db.refresh(t)
+    return serialize(t, travel_module.get_rates(db))
+
+
+@router.post("/travel-legs/{leg_id}/route", response_model=TravelOut)
+def recalculate_leg_route(
+    leg_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    leg, t = _get_leg_and_trip(leg_id, db)
+    if not routing.get_api_key(db):
+        raise HTTPException(status_code=422, detail="No routing API key configured")
+    if not routing.auto_route(db, leg):
+        raise HTTPException(
+            status_code=422,
+            detail="Could not calculate route — check from/to place names and transport type"
+        )
+    db.commit()
+    db.refresh(t)
+    return serialize(t, travel_module.get_rates(db))
+
+
+# ---- Export ----
 
 def _ascii(s: str) -> str:
     decomposed = unicodedata.normalize("NFKD", s)
@@ -276,7 +370,6 @@ def export_travels(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Generate the two-sheet xlsx (Cestovný príkaz + VPC) for one person+month."""
     period = get_period(db, period_id)
     travels = db.scalars(
         select(Travel).where(Travel.period_id == period_id, Travel.traveller_name == name)
@@ -284,10 +377,10 @@ def export_travels(
     if not travels:
         raise HTTPException(status_code=404, detail="No trips for that person in this month")
     address = next((t.traveller_address for t in travels if t.traveller_address), "")
-    rates = travel.get_rates(db)
-    data = travel.build_xlsx(name, address, period.year, period.month, travels, rates)
+    rates = travel_module.get_rates(db)
+    data = travel_module.build_xlsx(name, address, period.year, period.month, travels, rates)
 
-    month_name = travel._SK_MONTHS.get(period.month, str(period.month))
+    month_name = travel_module._SK_MONTHS.get(period.month, str(period.month))
     fname = _ascii(f"Cestovne_{month_name}_{period.year}_{name}") + ".xlsx"
     return Response(
         content=data,

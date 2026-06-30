@@ -1,16 +1,16 @@
-import { Copy, Download, Pencil, Plane, Plus, Trash2 } from "lucide-react";
+import { Copy, Download, Pencil, Plane, Plus, Route, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, downloadTravelReport } from "../api";
 import { EmptyState, Loading, Modal, Spinner, Toast } from "../components/UI";
 import { formatAmount, periodLabel } from "../utils";
 
-const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "MHD"];
+const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "Taxi", "MHD", "Iné"];
 
 export default function Travel() {
   const [periods, setPeriods] = useState(null);
   const [periodId, setPeriodId] = useState(null);
   const [travels, setTravels] = useState(null);
-  const [editing, setEditing] = useState(null); // trip object, or {} for new, or null
+  const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
 
   useEffect(() => {
@@ -47,7 +47,7 @@ export default function Travel() {
   }, [travels]);
 
   async function removeTrip(t) {
-    if (!confirm(`Delete the trip ${t.trip_date} (${t.traveller_name})?`)) return;
+    if (!confirm(`Delete trip ${t.trip_date} (${t.traveller_name})?`)) return;
     await api.del(`/travels/${t.id}`);
     flash("Trip deleted");
     loadTravels(periodId);
@@ -88,18 +88,15 @@ export default function Travel() {
 
       {periods.length === 0 && (
         <div className="card card-pad">
-          <EmptyState title="No months yet" hint="Create a month under “Months” first — travel is organized by the same months." />
+          <EmptyState title="No months yet" hint='Create a month under "Months" first.' />
         </div>
       )}
-
       {closed && (
         <div className="callout" style={{ marginBottom: 16 }}>
-          This month is closed. Reopen it under “Months” to add or change trips.
+          This month is closed. Reopen it under "Months" to add or change trips.
         </div>
       )}
-
       {period && travels === null && <Loading />}
-
       {period && travels && travels.length === 0 && (
         <div className="card card-pad">
           <EmptyState title="No trips this month" hint="Add a trip to start the travel report." />
@@ -107,17 +104,17 @@ export default function Travel() {
       )}
 
       {groups.map(([name, trips]) => {
-        const total = trips.reduce((s, t) => s + (t.per_diem || 0), 0);
-        const totalKm = trips.reduce((s, t) => s + (t.distance_km != null ? t.distance_km * 2 : 0), 0);
-        const hasKm = trips.some((t) => t.distance_km != null);
+        const totalPd = trips.reduce((s, t) => s + (t.per_diem || 0), 0);
+        const totalKm = trips.reduce((s, t) => s + (t.total_km || 0), 0);
+        const hasKm = trips.some((t) => t.total_km != null);
         return (
           <div key={name} className="card card-pad" style={{ marginBottom: 16 }}>
-            <div className="card-head" style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Plane size={17} /> {name}
                 <span className="doc-meta">
-                  · {trips.length} trip{trips.length === 1 ? "" : "s"} · {formatAmount(total)} stravné
-                  {hasKm && ` · ${totalKm.toFixed(1)} km celkom`}
+                  · {trips.length} trip{trips.length === 1 ? "" : "s"} · {formatAmount(totalPd)} stravné
+                  {hasKm && ` · ${totalKm.toFixed(1)} km`}
                 </span>
               </h3>
               <button className="btn btn-secondary btn-sm" onClick={() => downloadTravelReport(periodId, name)}>
@@ -129,11 +126,10 @@ export default function Travel() {
                 <thead>
                   <tr>
                     <th>Date</th>
-                    <th>Route</th>
+                    <th>Route / Legs</th>
                     <th>Purpose</th>
                     <th>Times</th>
-                    <th>Transport</th>
-                    <th className="right">km (tam+sp.)</th>
+                    <th className="right">km</th>
                     <th className="right">Stravné</th>
                     <th></th>
                   </tr>
@@ -143,22 +139,29 @@ export default function Travel() {
                     <tr key={t.id}>
                       <td className="num">
                         {t.trip_date}
-                        {t.end_date && t.end_date !== t.trip_date && <span className="doc-meta"> → {t.end_date}</span>}
+                        {t.end_date && t.end_date !== t.trip_date && (
+                          <span className="doc-meta"> → {t.end_date}</span>
+                        )}
                       </td>
-                      <td>{t.from_place} → {t.to_place}</td>
+                      <td>
+                        {t.legs.length === 0 && <span className="doc-meta">—</span>}
+                        {t.legs.length === 1 && (
+                          <span>{t.legs[0].from_place} → {t.legs[0].to_place}</span>
+                        )}
+                        {t.legs.length > 1 && (
+                          <span title={t.legs.map((l) => `${l.from_place}→${l.to_place}`).join(", ")}>
+                            {t.legs[0].from_place} → {t.legs[t.legs.length - 1].to_place}
+                            <span className="doc-meta"> ({t.legs.length} legs)</span>
+                          </span>
+                        )}
+                      </td>
                       <td>{t.purpose}</td>
                       <td className="num">{fmtTimes(t)}</td>
-                      <td>{t.transport}</td>
                       <td className="right num">
-                        {t.distance_km != null ? (
-                          <span title={`${t.duration_min != null ? t.duration_min + " min one-way" : ""}`}>
-                            {(t.distance_km * 2).toFixed(1)}
-                          </span>
-                        ) : "—"}
+                        {t.total_km != null ? t.total_km.toFixed(1) : "—"}
                       </td>
                       <td className="right">
                         <span className="num">{formatAmount(t.per_diem)}</span>
-                        {t.per_diem_override != null && <span className="doc-meta" title="Manual override"> ✎</span>}
                       </td>
                       <td className="right">
                         {!closed && (
@@ -201,7 +204,7 @@ export default function Travel() {
 
 function fmtTimes(t) {
   const hm = (s) => (s ? s.slice(0, 5) : "—");
-  return `${hm(t.depart_time)}–${hm(t.arrive_time)} / ${hm(t.return_depart_time)}–${hm(t.return_arrive_time)}`;
+  return `${hm(t.depart_time)}–${hm(t.return_arrive_time)}`;
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -211,11 +214,15 @@ function datesForWeekdays(year, month, picked) {
   const dt = new Date(year, month - 1, 1);
   const pad = (n) => String(n).padStart(2, "0");
   while (dt.getMonth() === month - 1) {
-    const idx = (dt.getDay() + 6) % 7; // Mon=0 … Sun=6
+    const idx = (dt.getDay() + 6) % 7;
     if (picked[idx]) out.push(`${year}-${pad(month)}-${pad(dt.getDate())}`);
     dt.setDate(dt.getDate() + 1);
   }
   return out;
+}
+
+function emptyLeg(order_idx = 0) {
+  return { from_place: "", to_place: "", transport: "Auto služobné", leg_time: "", expense: "", per_diem: "", order_idx };
 }
 
 function TripModal({ period, trip, existing, onClose, onSaved }) {
@@ -225,16 +232,26 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
     traveller_address: trip?.traveller_address || "",
     trip_date: trip?.trip_date || "",
     end_date: trip?.end_date || "",
-    from_place: trip?.from_place || "",
-    to_place: trip?.to_place || "",
     purpose: trip?.purpose || "",
     depart_time: (trip?.depart_time || "").slice(0, 5),
     arrive_time: (trip?.arrive_time || "").slice(0, 5),
     return_depart_time: (trip?.return_depart_time || "").slice(0, 5),
     return_arrive_time: (trip?.return_arrive_time || "").slice(0, 5),
-    transport: trip?.transport || "Auto služobné",
-    per_diem_override: trip?.per_diem_override != null ? String(trip.per_diem_override) : "",
   }));
+  const [legs, setLegs] = useState(() =>
+    trip?.legs?.length
+      ? trip.legs.map((l) => ({
+          from_place: l.from_place,
+          to_place: l.to_place,
+          transport: l.transport,
+          leg_time: (l.leg_time || "").slice(0, 5),
+          expense: l.expense != null ? String(l.expense) : "",
+          per_diem: l.per_diem != null ? String(l.per_diem) : "",
+          order_idx: l.order_idx,
+          _id: l.id,
+        }))
+      : [emptyLeg(0)]
+  );
   const [repeat, setRepeat] = useState(false);
   const [weekdays, setWeekdays] = useState([false, false, false, false, false, false, false]);
   const [busy, setBusy] = useState(false);
@@ -246,58 +263,86 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
     [repeat, weekdays, period.year, period.month]
   );
 
-  // Prefill the home address from an earlier trip by the same traveller.
   function onNameBlur() {
     if (f.traveller_address) return;
     const match = existing.find((t) => t.traveller_name === f.traveller_name && t.traveller_address);
     if (match) setF((s) => ({ ...s, traveller_address: match.traveller_address }));
   }
 
-  function template() {
+  function addLeg() {
+    setLegs((ls) => [...ls, emptyLeg(ls.length)]);
+  }
+
+  function removeLeg(idx) {
+    setLegs((ls) => ls.filter((_, i) => i !== idx).map((l, i) => ({ ...l, order_idx: i })));
+  }
+
+  function setLeg(idx, key, val) {
+    setLegs((ls) => ls.map((l, i) => (i === idx ? { ...l, [key]: val } : l)));
+  }
+
+  function buildLegs() {
+    return legs.map((l, i) => ({
+      from_place: l.from_place.trim(),
+      to_place: l.to_place.trim(),
+      transport: l.transport,
+      leg_time: l.leg_time || null,
+      expense: l.expense === "" ? null : Number(l.expense),
+      per_diem: l.per_diem === "" ? null : Number(l.per_diem),
+      order_idx: i,
+    }));
+  }
+
+  function header() {
     return {
       traveller_name: f.traveller_name.trim(),
       traveller_address: f.traveller_address.trim(),
-      from_place: f.from_place.trim(),
-      to_place: f.to_place.trim(),
       purpose: f.purpose.trim(),
       depart_time: f.depart_time || null,
       arrive_time: f.arrive_time || null,
       return_depart_time: f.return_depart_time || null,
       return_arrive_time: f.return_arrive_time || null,
-      transport: f.transport.trim(),
-      per_diem_override: f.per_diem_override === "" ? null : Number(f.per_diem_override),
     };
   }
 
   async function save() {
-    if (!f.traveller_name.trim()) {
-      setError("Traveller name is required.");
-      return;
-    }
-    setBusy(true);
-    setError("");
+    if (!f.traveller_name.trim()) { setError("Traveller name is required."); return; }
+    setBusy(true); setError("");
     try {
       if (!trip && repeat) {
-        if (repeatDates.length === 0) {
-          setError("Pick at least one weekday to repeat on.");
-          setBusy(false);
-          return;
-        }
+        if (repeatDates.length === 0) { setError("Pick at least one weekday."); setBusy(false); return; }
         await api.post(`/periods/${periodId}/travels/bulk`, {
-          ...template(), trip_date: repeatDates[0], dates: repeatDates,
+          ...header(), trip_date: repeatDates[0], dates: repeatDates, legs: buildLegs(),
         });
         onSaved(`Added ${repeatDates.length} trips`);
         return;
       }
-      if (!f.trip_date) {
-        setError("Date is required.");
-        setBusy(false);
-        return;
+      if (!f.trip_date) { setError("Date is required."); setBusy(false); return; }
+      const body = { ...header(), trip_date: f.trip_date, end_date: f.end_date || null, legs: buildLegs() };
+
+      if (trip) {
+        // Update header
+        await api.patch(`/travels/${trip.id}`, { ...header(), trip_date: f.trip_date, end_date: f.end_date || null });
+        // Sync legs: delete removed, add new, update existing
+        const existingIds = new Set(trip.legs.map((l) => l.id));
+        const keptIds = new Set(legs.filter((l) => l._id).map((l) => l._id));
+        for (const id of existingIds) {
+          if (!keptIds.has(id)) await api.del(`/travel-legs/${id}`);
+        }
+        for (let i = 0; i < legs.length; i++) {
+          const l = legs[i];
+          const legBody = { ...buildLegs()[i] };
+          if (l._id) {
+            await api.patch(`/travel-legs/${l._id}`, legBody);
+          } else {
+            await api.post(`/travels/${trip.id}/legs`, legBody);
+          }
+        }
+        onSaved("Trip updated");
+      } else {
+        await api.post(`/periods/${periodId}/travels`, body);
+        onSaved("Trip added");
       }
-      const body = { ...template(), trip_date: f.trip_date, end_date: f.end_date || null };
-      if (trip) await api.patch(`/travels/${trip.id}`, body);
-      else await api.post(`/periods/${periodId}/travels`, body);
-      onSaved(trip ? "Trip updated" : "Trip added");
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -308,6 +353,8 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
     <Modal title={trip ? "Edit trip" : "Add trip"} onClose={onClose}>
       <div className="stack" style={{ gap: 12 }}>
         {error && <p className="error-text">{error}</p>}
+
+        {/* Header */}
         <div className="row-2">
           <div className="field">
             <label>Traveller</label>
@@ -318,6 +365,7 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
             <input value={f.traveller_address} onChange={set("traveller_address")} />
           </div>
         </div>
+
         {!repeat && (
           <div className="row-2">
             <div className="field">
@@ -330,36 +378,19 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
             </div>
           </div>
         )}
-        <div className="row-2">
-          <div className="field">
-            <label>Transport</label>
-            <select value={f.transport} onChange={set("transport")}>
-              {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
-            </select>
-          </div>
-          <div className="field" />
-        </div>
-        <div className="row-2">
-          <div className="field">
-            <label>From (home)</label>
-            <input value={f.from_place} onChange={set("from_place")} placeholder="Nitra" />
-          </div>
-          <div className="field">
-            <label>Destination</label>
-            <input value={f.to_place} onChange={set("to_place")} placeholder="Trnava" />
-          </div>
-        </div>
+
         <div className="field">
           <label>Purpose (Účel cesty)</label>
           <input value={f.purpose} onChange={set("purpose")} />
         </div>
+
         <div className="row-2">
           <div className="field">
             <label>Depart (odchod)</label>
             <input type="time" value={f.depart_time} onChange={set("depart_time")} />
           </div>
           <div className="field">
-            <label>Arrive (príchod)</label>
+            <label>Arrive (príchod dest.)</label>
             <input type="time" value={f.arrive_time} onChange={set("arrive_time")} />
           </div>
         </div>
@@ -373,26 +404,93 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
             <input type="time" value={f.return_arrive_time} onChange={set("return_arrive_time")} />
           </div>
         </div>
-        <div className="field">
-          <label>Per-diem override (€)</label>
-          <input type="number" step="0.01" value={f.per_diem_override} onChange={set("per_diem_override")}
-                 placeholder="auto from duration" />
-          <span className="doc-meta">Leave blank to auto-calculate from the trip duration.</span>
+
+        {/* Legs */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <label style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <Route size={14} /> Legs / Stops
+            </label>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={addLeg}>
+              <Plus size={13} /> Add leg
+            </button>
+          </div>
+          <div className="stack" style={{ gap: 8 }}>
+            {legs.map((leg, idx) => (
+              <div key={idx} className="card" style={{ padding: "10px 12px", background: "var(--surface-2, #f8f8f8)" }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                  <span className="doc-meta" style={{ minWidth: 20 }}>#{idx + 1}</span>
+                  <input
+                    style={{ flex: 1 }}
+                    placeholder="From"
+                    value={leg.from_place}
+                    onChange={(e) => setLeg(idx, "from_place", e.target.value)}
+                  />
+                  <span className="doc-meta">→</span>
+                  <input
+                    style={{ flex: 1 }}
+                    placeholder="To"
+                    value={leg.to_place}
+                    onChange={(e) => setLeg(idx, "to_place", e.target.value)}
+                  />
+                  {legs.length > 1 && (
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeLeg(idx)}>
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <select
+                    style={{ flex: "1 1 140px" }}
+                    value={leg.transport}
+                    onChange={(e) => setLeg(idx, "transport", e.target.value)}
+                  >
+                    {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                  <input
+                    type="time"
+                    style={{ flex: "0 0 110px" }}
+                    title="Departure time from this leg's origin"
+                    value={leg.leg_time}
+                    onChange={(e) => setLeg(idx, "leg_time", e.target.value)}
+                  />
+                  <input
+                    type="number" step="0.01" min="0"
+                    style={{ flex: "1 1 90px" }}
+                    placeholder="Výdavky €"
+                    title="Reimbursable expense (ticket, taxi, etc.)"
+                    value={leg.expense}
+                    onChange={(e) => setLeg(idx, "expense", e.target.value)}
+                  />
+                  <input
+                    type="number" step="0.01" min="0"
+                    style={{ flex: "1 1 90px" }}
+                    placeholder="Stravné €"
+                    title="Per-diem for this leg (leave blank = auto from total duration)"
+                    value={leg.per_diem}
+                    onChange={(e) => setLeg(idx, "per_diem", e.target.value)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="doc-meta" style={{ marginTop: 4 }}>
+            Stravné per leg — fill in when rates differ (e.g. SK domestic vs. foreign). Leave blank on all legs to auto-calculate from trip duration.
+          </p>
         </div>
 
         {!trip && (
           <div className="field">
             <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} style={{ width: "auto" }} />
-              Repeat — create the same trip on chosen weekdays of {periodLabel(period.year, period.month)}
+              Repeat — create on chosen weekdays of {periodLabel(period.year, period.month)}
             </label>
             {repeat && (
               <>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                   {WEEKDAYS.map((d, i) => (
                     <button
-                      key={d}
-                      type="button"
+                      key={d} type="button"
                       className={`btn btn-sm ${weekdays[i] ? "btn-accent" : "btn-ghost"}`}
                       onClick={() => setWeekdays((w) => w.map((v, j) => (j === i ? !v : v)))}
                     >

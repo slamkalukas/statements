@@ -79,16 +79,23 @@ def route(from_place: str, to_place: str, api_key: str) -> tuple[float, int] | N
         return None
 
 
-def auto_route(db, t) -> bool:
-    """Fill distance_km and duration_min on a Travel record if both places are set
-    and an API key is configured. Returns True if the record was updated."""
-    if not t.from_place or not t.to_place:
+_ROUTABLE_TRANSPORTS = {
+    "Auto služobné", "Auto súkromné", "Auto", "Bus", "MHD",
+}
+
+
+def auto_route(db, leg) -> bool:
+    """Fill distance_km and duration_min on a TravelLeg.
+    Skips flights and other non-routable transports. Returns True if updated."""
+    if leg.transport and leg.transport not in _ROUTABLE_TRANSPORTS:
+        return False
+    if not leg.from_place or not leg.to_place:
         return False
     api_key = get_api_key(db)
     if not api_key:
         return False
-    result = route(t.from_place, t.to_place, api_key)
+    result = route(leg.from_place, leg.to_place, api_key)
     if result is None:
         return False
-    t.distance_km, t.duration_min = result
+    leg.distance_km, leg.duration_min = result
     return True

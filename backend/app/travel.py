@@ -1,9 +1,9 @@
 """Travel report (cestovné): per-diem calculation and xlsx export.
 
-Per-diem (stravné) follows Slovak meal-allowance bands by trip duration; the
-rates are configurable (stored in Settings) with a per-trip override. The export
-reproduces the two-sheet template: "Cestovný príkaz" + "Vyúčtovanie pracovnej
-cesty" (VPC), per person per month.
+Per-diem (stravné) follows Slovak meal-allowance bands by trip duration; for
+multi-leg/international trips each leg can carry its own per_diem value and the
+trip total is their sum. The export reproduces the two-sheet template:
+"Cestovný príkaz" + "Vyúčtovanie pracovnej cesty" (VPC), per person per month.
 """
 import io
 import json
@@ -56,7 +56,7 @@ def duration_hours(date_from: date, depart: time | None,
     d = depart.hour * 60 + depart.minute
     a = arrive_home.hour * 60 + arrive_home.minute
     total = span_days * 24 * 60 + (a - d)
-    if total <= 0:  # same-day entry that crosses midnight
+    if total <= 0:
         total += 24 * 60
     return total / 60.0
 
@@ -85,8 +85,12 @@ def computed_per_diem(date_from: date, depart: time | None,
 
 
 def effective_per_diem(t: Travel, rates: dict) -> Decimal:
-    if t.per_diem_override is not None:
-        return Decimal(t.per_diem_override).quantize(Decimal("0.01"))
+    """Sum of leg per_diems when any leg has one set; otherwise compute from duration."""
+    if t.legs and any(leg.per_diem is not None for leg in t.legs):
+        total = sum(
+            Decimal(str(leg.per_diem)) for leg in t.legs if leg.per_diem is not None
+        )
+        return total.quantize(Decimal("0.01"))
     return computed_per_diem(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time, rates)
 
 
@@ -98,6 +102,18 @@ def _fmt_time(t: time | None) -> str:
     return f"{t.hour}:{t.minute:02d}" if t is not None else ""
 
 
+def _home_place(t: Travel) -> str:
+    return t.legs[0].from_place if t.legs else ""
+
+
+def _meeting_places(t: Travel) -> str:
+    seen: list[str] = []
+    for leg in t.legs:
+        if leg.to_place and leg.to_place not in seen:
+            seen.append(leg.to_place)
+    return ", ".join(seen)
+
+
 def build_xlsx(name: str, address: str, year: int, month: int,
                travels: list[Travel], rates: dict) -> bytes:
     """Render the two-sheet travel report for one person and month."""
@@ -105,7 +121,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     from openpyxl.styles import Alignment, Border, Font, Side
 
     bold = Font(bold=True)
-    title = Font(bold=True, size=14)
+    title_font = Font(bold=True, size=14)
     thin = Side(style="thin")
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center")
@@ -117,7 +133,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     # ---- Sheet 1: Cestovný príkaz ----
     s1 = wb.active
     s1.title = _SK_MONTHS.get(month, str(month))
-    s1["B2"] = "CESTOVNÝ PRÍKAZ"; s1["B2"].font = title
+    s1["B2"] = "CESTOVNÝ PRÍKAZ"; s1["B2"].font = title_font
     s1["B3"] = "Firma:"; s1["C3"] = "Meno a priezvisko:"; s1["E3"] = "Bydlisko:"
     for c in ("B3", "C3", "E3"):
         s1[c].font = bold
@@ -130,10 +146,11 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     r = 7
     for t in travels:
         end = t.end_date or t.trip_date
-        s1[f"B{r}"] = f"{_fmt_date(t.trip_date)} {t.from_place}, {_fmt_time(t.depart_time)}".strip()
-        s1[f"C{r}"] = t.to_place
+        home = _home_place(t)
+        s1[f"B{r}"] = f"{_fmt_date(t.trip_date)} {home}, {_fmt_time(t.depart_time)}".strip(", ")
+        s1[f"C{r}"] = _meeting_places(t)
         s1[f"E{r}"] = t.purpose
-        s1[f"G{r}"] = f"{_fmt_date(end)} {t.from_place}, {_fmt_time(t.return_arrive_time)}".strip()
+        s1[f"G{r}"] = f"{_fmt_date(end)} {home}, {_fmt_time(t.return_arrive_time)}".strip(", ")
         for c in ("B", "C", "E", "G"):
             s1[f"{c}{r}"].border = box
         r += 1
@@ -141,50 +158,70 @@ def build_xlsx(name: str, address: str, year: int, month: int,
         s1.column_dimensions[col].width = w
 
     # ---- Sheet 2: Vyúčtovanie pracovnej cesty (VPC) ----
+    # Columns: B=Dátum C=ODCHOD–PRÍCHOD D=o hod. E=Dopravný prostriedok
+    #          F=Stravné  G=Výdavky  H=Spolu
     s2 = wb.create_sheet("VPC")
-    s2["B2"] = "VYÚČTOVANIE PRACOVNEJ CESTY"; s2["B2"].font = title
+    s2["B2"] = "VYÚČTOVANIE PRACOVNEJ CESTY"; s2["B2"].font = title_font
     s2["B3"] = "Firma:"; s2["C3"] = "Meno a priezvisko:"
     s2["B3"].font = bold; s2["C3"].font = bold
     s2["B4"] = COMPANY; s2["C4"] = name
 
-    headers = ["Dátum", "ODCHOD – PRÍCHOD", "o hod.", "Použitý dopravný prostriedok", "Stravné", "Spolu"]
+    headers = ["Dátum", "ODCHOD – PRÍCHOD", "o hod.", "Použitý dopravný prostriedok",
+               "Stravné", "Výdavky", "Spolu"]
     for i, h in enumerate(headers):
         cell = s2.cell(row=6, column=2 + i, value=h)
         cell.font = bold; cell.alignment = center; cell.border = box
-    r = 7
-    total = Decimal("0.00")
+
+    data_start = 7
+    r = data_start
+
     for t in travels:
-        pd = effective_per_diem(t, rates)
-        total += pd
         end = t.end_date or t.trip_date
-        # Outbound legs on the start date; return legs on the end date.
-        legs = [
-            (t.trip_date, f"Odchod {t.from_place}".strip(), t.depart_time, None),
-            (t.trip_date, f"Príchod {t.to_place}".strip(), t.arrive_time, None),
-            (end, f"Odchod {t.to_place}".strip(), t.return_depart_time, None),
-            (end, f"Príchod {t.from_place}".strip(), t.return_arrive_time, float(pd)),
-        ]
-        for leg_date, label, tm, amount in legs:
-            s2[f"B{r}"] = _fmt_date(leg_date)
-            s2[f"C{r}"] = label
-            s2[f"D{r}"] = _fmt_time(tm)
-            s2[f"E{r}"] = t.transport
-            if amount is not None:
-                s2[f"F{r}"] = amount; s2[f"F{r}"].number_format = "0.00"
-                s2[f"G{r}"] = amount; s2[f"G{r}"].number_format = "0.00"
-            for c in ("B", "C", "D", "E", "F", "G"):
-                s2[f"{c}{r}"].border = box
+        for leg in t.legs:
+            leg_date = end if leg.order_idx > 0 and len(t.legs) > 1 and leg == t.legs[-1] else t.trip_date
+            s2.cell(r, 2).value = _fmt_date(leg_date)
+            s2.cell(r, 3).value = f"{leg.from_place} – {leg.to_place}"
+            s2.cell(r, 4).value = _fmt_time(leg.leg_time)
+            s2.cell(r, 5).value = leg.transport
+            if leg.per_diem is not None:
+                s2.cell(r, 6).value = float(leg.per_diem)
+                s2.cell(r, 6).number_format = "0.00"
+            if leg.expense is not None:
+                s2.cell(r, 7).value = float(leg.expense)
+                s2.cell(r, 7).number_format = "0.00"
+            s2.cell(r, 8).value = f"=SUM(F{r}:G{r})"
+            s2.cell(r, 8).number_format = "0.00"
+            for col in range(2, 9):
+                s2.cell(r, col).border = box
             r += 1
 
-    r += 1
-    s2[f"B{r}"] = "SPOLU"; s2[f"B{r}"].font = bold
-    s2[f"F{r}"] = float(total); s2[f"F{r}"].number_format = "0.00"; s2[f"F{r}"].font = bold
-    s2[f"G{r}"] = float(total); s2[f"G{r}"].number_format = "0.00"; s2[f"G{r}"].font = bold
-    s2[f"B{r+1}"] = "PREDDAVOK"; s2[f"G{r+1}"] = 0.0; s2[f"G{r+1}"].number_format = "0.00"
-    s2[f"B{r+2}"] = "DOPLATOK – PREPLATOK"; s2[f"B{r+2}"].font = bold
-    s2[f"G{r+2}"] = float(total); s2[f"G{r+2}"].number_format = "0.00"; s2[f"G{r+2}"].font = bold
+        # Blank separator between trips when there are multiple
+        if len(travels) > 1 and t is not travels[-1]:
+            r += 1
 
-    for col, w in {"B": 14, "C": 22, "D": 9, "E": 28, "F": 10, "G": 10}.items():
+    last_data_row = r - 1
+    r += 1  # blank row before totals
+
+    spolu_row = r
+    s2.cell(r, 2).value = "SPOLU"; s2.cell(r, 2).font = bold
+    s2.cell(r, 6).value = f"=SUM(F{data_start}:F{last_data_row})"
+    s2.cell(r, 6).number_format = "0.00"; s2.cell(r, 6).font = bold
+    s2.cell(r, 7).value = f"=SUM(G{data_start}:G{last_data_row})"
+    s2.cell(r, 7).number_format = "0.00"; s2.cell(r, 7).font = bold
+    s2.cell(r, 8).value = f"=SUM(H{data_start}:H{last_data_row})"
+    s2.cell(r, 8).number_format = "0.00"; s2.cell(r, 8).font = bold
+
+    preddavok_row = r + 1
+    s2.cell(preddavok_row, 2).value = "PREDDAVOK"
+    s2.cell(preddavok_row, 8).value = 0.0
+    s2.cell(preddavok_row, 8).number_format = "0.00"
+
+    doplatok_row = r + 2
+    s2.cell(doplatok_row, 2).value = "DOPLATOK – PREPLATOK"; s2.cell(doplatok_row, 2).font = bold
+    s2.cell(doplatok_row, 8).value = f"=H{spolu_row}-H{preddavok_row}"
+    s2.cell(doplatok_row, 8).number_format = "0.00"; s2.cell(doplatok_row, 8).font = bold
+
+    for col, w in {"B": 14, "C": 28, "D": 9, "E": 28, "F": 10, "G": 10, "H": 10}.items():
         s2.column_dimensions[col].width = w
 
     buf = io.BytesIO()

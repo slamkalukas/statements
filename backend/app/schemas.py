@@ -130,29 +130,58 @@ class StorageUpdate(BaseModel):
 
 
 # ---- Travel report (cestovné) ----
+
+class TravelLegBase(BaseModel):
+    from_place: str = Field(default="", max_length=120)
+    to_place: str = Field(default="", max_length=120)
+    transport: str = Field(default="", max_length=60)
+    leg_time: time | None = None
+    expense: float | None = None   # reimbursable cost (ticket, taxi receipt, etc.)
+    per_diem: float | None = None  # stravné for this leg (None = not set)
+
+
+class TravelLegCreate(TravelLegBase):
+    order_idx: int = 0
+
+
+class TravelLegUpdate(BaseModel):
+    from_place: str | None = Field(default=None, max_length=120)
+    to_place: str | None = Field(default=None, max_length=120)
+    transport: str | None = Field(default=None, max_length=60)
+    leg_time: time | None = None
+    expense: float | None = None
+    per_diem: float | None = None
+    order_idx: int | None = None
+
+
+class TravelLegOut(TravelLegBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    travel_id: int
+    order_idx: int
+    distance_km: float | None = None
+    duration_min: int | None = None
+
+
 class TravelBase(BaseModel):
     traveller_name: str = Field(default="", max_length=120)
     traveller_address: str = Field(default="", max_length=255)
     trip_date: date
-    end_date: date | None = None  # multi-day trip; None = same day
-    from_place: str = Field(default="", max_length=120)
-    to_place: str = Field(default="", max_length=120)
+    end_date: date | None = None
     purpose: str = Field(default="", max_length=255)
     depart_time: time | None = None
     arrive_time: time | None = None
     return_depart_time: time | None = None
     return_arrive_time: time | None = None
-    transport: str = Field(default="", max_length=60)
-    per_diem_override: Money | None = None
 
 
 class TravelCreate(TravelBase):
-    pass
+    legs: list[TravelLegCreate] = Field(default_factory=list)
 
 
 class BulkTravelCreate(TravelBase):
-    # Create one trip per date with the same template (regular recurring trips).
     dates: list[date] = Field(min_length=1, max_length=200)
+    legs: list[TravelLegCreate] = Field(default_factory=list)
 
 
 class TravelUpdate(BaseModel):
@@ -160,26 +189,21 @@ class TravelUpdate(BaseModel):
     traveller_address: str | None = Field(default=None, max_length=255)
     trip_date: date | None = None
     end_date: date | None = None
-    from_place: str | None = Field(default=None, max_length=120)
-    to_place: str | None = Field(default=None, max_length=120)
     purpose: str | None = Field(default=None, max_length=255)
     depart_time: time | None = None
     arrive_time: time | None = None
     return_depart_time: time | None = None
     return_arrive_time: time | None = None
-    transport: str | None = Field(default=None, max_length=60)
-    per_diem_override: Money | None = None
-    clear_override: bool = False  # set True to drop a manual per-diem override
 
 
 class TravelOut(TravelBase):
     id: int
     period_id: int
-    per_diem: float            # effective (override or computed)
-    per_diem_computed: float   # what the duration-based bands give
+    per_diem: float         # effective: sum of leg per_diems, or duration-based fallback
+    per_diem_computed: float
     duration_hours: float | None = None
-    distance_km: float | None = None    # one-way km (round-trip = 2×)
-    duration_min: int | None = None     # one-way drive time, rounded to 20 min
+    total_km: float | None = None   # sum of all leg distance_km
+    legs: list[TravelLegOut] = []
 
 
 class PerDiemRates(BaseModel):
