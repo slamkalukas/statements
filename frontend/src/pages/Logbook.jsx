@@ -1,5 +1,5 @@
-import { BookOpen, Car, ChevronLeft, ChevronRight, Download, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { BookOpen, Car, ChevronLeft, ChevronRight, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { api, downloadLogbook } from "../api";
 import { EmptyState, Loading, Modal, Spinner, Toast } from "../components/UI";
 import { formatAmount } from "../utils";
@@ -43,6 +43,8 @@ export default function Logbook() {
   const [editTrip, setEditTrip] = useState(null);
   const [toast, setToast] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importRef = useRef(null);
 
   useEffect(() => {
     api.get("/vehicles").then((vs) => {
@@ -69,6 +71,24 @@ export default function Logbook() {
   function nextMonth() {
     if (month === 12) { setYear((y) => y + 1); setMonth(1); }
     else setMonth((m) => m + 1);
+  }
+
+  async function handleImport(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setImporting(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.postForm(`/vehicles/${vehicleId}/trips/import`, form);
+      flash(`Imported ${res.imported} trip${res.imported !== 1 ? "s" : ""}${res.skipped ? `, ${res.skipped} skipped` : ""}.`);
+      loadTrips();
+    } catch (err) {
+      flash(err.message);
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function handleExport() {
@@ -164,6 +184,16 @@ export default function Logbook() {
               <button className="btn btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={16} /></button>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
+              <input
+                ref={importRef}
+                type="file"
+                accept=".xlsx"
+                style={{ display: "none" }}
+                onChange={handleImport}
+              />
+              <button className="btn btn-secondary btn-sm" onClick={() => importRef.current?.click()} disabled={importing}>
+                {importing ? <Spinner /> : <Upload size={14} />} Import xlsx
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={handleExport} disabled={exporting}>
                 {exporting ? <Spinner /> : <Download size={14} />} Export xlsx
               </button>

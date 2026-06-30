@@ -1,7 +1,7 @@
 import unicodedata
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -201,6 +201,39 @@ def delete_trip(
         raise HTTPException(404, "Trip not found")
     db.delete(t)
     db.commit()
+
+
+@router.post("/vehicles/{vid}/trips/import")
+async def import_trips(
+    vid: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    v = db.get(Vehicle, vid)
+    if not v:
+        raise HTTPException(404, "Vehicle not found")
+    data = await file.read()
+    try:
+        rows = lb.parse_xlsx(data)
+    except Exception as e:
+        raise HTTPException(400, f"Could not parse xlsx: {e}")
+
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+    for i, row in enumerate(rows, 1):
+        if not row.get("start_dt"):
+            skipped += 1
+            errors.append(f"Row {i}: missing start date")
+            continue
+        jnum = _next_journey_number(db, vid, row["start_dt"].year, row["start_dt"].month)
+        t = CarTrip(vehicle_id=vid, journey_number=jnum, **row)
+        db.add(t)
+        db.flush()
+        imported += 1
+    db.commit()
+    return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
 @router.get("/vehicles/{vid}/trips/export")
