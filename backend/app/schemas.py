@@ -221,6 +221,7 @@ class VehicleBase(BaseModel):
     ownership: str = Field(default="Firemné", max_length=30)
     date_added: date | None = None
     active: bool = True
+    odometer_base: int | None = None
 
 
 class VehicleCreate(VehicleBase):
@@ -238,6 +239,7 @@ class VehicleUpdate(BaseModel):
     ownership: str | None = Field(default=None, max_length=30)
     date_added: date | None = None
     active: bool | None = None
+    odometer_base: int | None = None
 
 
 class VehicleOut(VehicleBase):
@@ -253,8 +255,7 @@ class CarTripBase(BaseModel):
     end_dt: datetime | None = None
     purpose: str = Field(default="", max_length=255)
     route: str = Field(default="", max_length=1000)
-    odometer_start: int | None = None
-    odometer_end: int | None = None
+    km: int | None = None
     driver_name: str = Field(default="", max_length=120)
     trip_type: str = Field(default="Firemná", max_length=30)
     events: str | None = Field(default=None, max_length=255)
@@ -270,8 +271,7 @@ class CarTripUpdate(BaseModel):
     end_dt: datetime | None = None
     purpose: str | None = Field(default=None, max_length=255)
     route: str | None = Field(default=None, max_length=1000)
-    odometer_start: int | None = None
-    odometer_end: int | None = None
+    km: int | None = None
     driver_name: str | None = Field(default=None, max_length=120)
     trip_type: str | None = Field(default=None, max_length=30)
     events: str | None = None
@@ -284,7 +284,6 @@ class CarTripOut(CarTripBase):
     id: int
     vehicle_id: int
     journey_number: int
-    km: int | None = None
     cost: float | None = None
     travel_id: int | None = None
     created_at: datetime | None = None

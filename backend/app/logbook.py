@@ -15,23 +15,16 @@ def fuel_unit(vehicle: Vehicle) -> str:
     return "kWh" if "elektr" in (vehicle.fuel_type or "").lower() else "L"
 
 
-def trip_km(trip: CarTrip) -> int | None:
-    if trip.odometer_start is not None and trip.odometer_end is not None:
-        return trip.odometer_end - trip.odometer_start
-    return None
-
-
 def trip_cost(trip: CarTrip, vehicle: Vehicle) -> float | None:
-    km = trip_km(trip)
-    if km is None or vehicle.consumption is None:
+    if trip.km is None or vehicle.consumption is None:
         return None
     price = float(trip.fuel_price_override or vehicle.fuel_price or 0)
     if not price:
         return None
-    return round(km * float(vehicle.consumption) / 100 * price, 2)
+    return round(trip.km * float(vehicle.consumption) / 100 * price, 2)
 
 
-def build_xlsx(vehicle: Vehicle, trips: list[CarTrip]) -> bytes:
+def build_xlsx(vehicle: Vehicle, trips: list[CarTrip], base_odometer: int = 0) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, Side
 
@@ -91,9 +84,12 @@ def build_xlsx(vehicle: Vehicle, trips: list[CarTrip]) -> bytes:
         cell.alignment = center
 
     trips_sorted = sorted(trips, key=lambda t: t.start_dt)
+    running = base_odometer
     for i, trip in enumerate(trips_sorted, start=1):
         r = header_row + i
-        km = trip_km(trip)
+        odo_start = running
+        odo_end = running + (trip.km or 0)
+        running = odo_end
         cost = trip_cost(trip, vehicle)
         fp = float(trip.fuel_price_override or vehicle.fuel_price or 0) or None
         row_data = [
@@ -102,9 +98,9 @@ def build_xlsx(vehicle: Vehicle, trips: list[CarTrip]) -> bytes:
             trip.end_dt.strftime("%d.%m.%Y %H:%M") if trip.end_dt else "",
             trip.purpose,
             trip.route,
-            trip.odometer_start,
-            trip.odometer_end,
-            km,
+            odo_start,
+            odo_end,
+            trip.km,
             fp,
             trip.trip_type,
             trip.driver_name,
@@ -181,13 +177,17 @@ def parse_xlsx(data: bytes) -> list[dict]:
         start_dt = _parse_dt(row[1] if len(row) > 1 else None)
         if start_dt is None:
             continue
+        odo_start = _int(row[5]) if len(row) > 5 else None
+        odo_end = _int(row[6]) if len(row) > 6 else None
+        km = _int(row[7]) if len(row) > 7 else None
+        if km is None and odo_start is not None and odo_end is not None:
+            km = odo_end - odo_start
         trips.append({
             "start_dt": start_dt,
             "end_dt": _parse_dt(row[2] if len(row) > 2 else None),
             "purpose": str(row[3] or "") if len(row) > 3 else "",
             "route": str(row[4] or "") if len(row) > 4 else "",
-            "odometer_start": _int(row[5]) if len(row) > 5 else None,
-            "odometer_end": _int(row[6]) if len(row) > 6 else None,
+            "km": km,
             "fuel_price_override": _float(row[8]) if len(row) > 8 else None,
             "trip_type": str(row[9] or "Firemná") if len(row) > 9 else "Firemná",
             "driver_name": str(row[10] or "") if len(row) > 10 else "",

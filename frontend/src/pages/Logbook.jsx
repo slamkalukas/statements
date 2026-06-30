@@ -326,6 +326,7 @@ function VehicleModal({ vehicle, onClose, onSaved }) {
     fuel_price: vehicle?.fuel_price != null ? String(vehicle.fuel_price) : "",
     ownership: vehicle?.ownership || "Firemné",
     date_added: vehicle?.date_added || "",
+    odometer_base: vehicle?.odometer_base != null ? String(vehicle.odometer_base) : "",
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -341,6 +342,7 @@ function VehicleModal({ vehicle, onClose, onSaved }) {
         consumption: f.consumption ? Number(f.consumption) : null,
         fuel_price: f.fuel_price ? Number(f.fuel_price) : null,
         date_added: f.date_added || null,
+        odometer_base: f.odometer_base !== "" ? Number(f.odometer_base) : null,
       };
       const v = vehicle
         ? await api.patch(`/vehicles/${vehicle.id}`, body)
@@ -385,9 +387,15 @@ function VehicleModal({ vehicle, onClose, onSaved }) {
             <input type="number" step="0.001" min="0" value={f.fuel_price} onChange={set("fuel_price")} placeholder="0.41" />
           </div>
         </div>
-        <div className="field">
-          <label>Date added to assets</label>
-          <input type="date" value={f.date_added} onChange={set("date_added")} />
+        <div className="row-2">
+          <div className="field">
+            <label>Date added to assets</label>
+            <input type="date" value={f.date_added} onChange={set("date_added")} />
+          </div>
+          <div className="field">
+            <label>Starting odometer (km)</label>
+            <input type="number" min="0" value={f.odometer_base} onChange={set("odometer_base")} placeholder="0" />
+          </div>
         </div>
         <button className="btn btn-primary" disabled={busy} onClick={save}>
           {busy ? <Spinner /> : (vehicle ? "Save changes" : "Add vehicle")}
@@ -407,8 +415,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
     end_dt: trip ? toInputDt(trip.end_dt) : "",
     purpose: trip?.purpose || "",
     route: trip?.route || "",
-    odometer_start: trip?.odometer_start != null ? String(trip.odometer_start) : "",
-    odometer_end: trip?.odometer_end != null ? String(trip.odometer_end) : "",
+    km: trip?.km != null ? String(trip.km) : "",
     driver_name: trip?.driver_name || "",
     trip_type: trip?.trip_type || "Firemná",
     events: trip?.events || "",
@@ -420,29 +427,16 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
   const [error, setError] = useState("");
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
 
-  // Auto-fill odometer_start from last trip when adding new
-  useEffect(() => {
-    if (trip) return;
-    api.get(`/vehicles/${vehicle.id}/last-odometer`).then((r) => {
-      if (r.odometer_end != null) {
-        setF((s) => ({ ...s, odometer_start: String(r.odometer_end) }));
-      }
-    }).catch(() => {});
-  }, []);
-
-  // Auto-calculate odometer_end from route (debounced 800ms)
+  // Auto-calculate km from route (debounced 800ms)
   useEffect(() => {
     const route = f.route.trim();
-    if (route.length < 5 || !route.includes(">") && !route.includes("→")) return;
+    if (route.length < 5 || (!route.includes(">") && !route.includes("→"))) return;
     setDistError("");
     const timer = setTimeout(async () => {
       setCalcDist(true);
       try {
         const res = await api.post("/route-distance", { route });
-        setF((s) => {
-          const start = Number(s.odometer_start) || 0;
-          return { ...s, odometer_end: String(start + res.km) };
-        });
+        setF((s) => ({ ...s, km: String(res.km) }));
       } catch (e) {
         setDistError(e.message);
       } finally {
@@ -452,9 +446,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
     return () => clearTimeout(timer);
   }, [f.route]);
 
-  const km = f.odometer_start && f.odometer_end
-    ? Math.max(0, Number(f.odometer_end) - Number(f.odometer_start))
-    : null;
+  const km = f.km ? Number(f.km) : null;
   const fp = Number(f.fuel_price_override) || Number(vehicle.fuel_price) || 0;
   const cost = km != null && vehicle.consumption && fp
     ? (km * vehicle.consumption / 100 * fp).toFixed(2)
@@ -467,8 +459,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
       const body = {
         ...f,
         end_dt: f.end_dt || null,
-        odometer_start: f.odometer_start ? Number(f.odometer_start) : null,
-        odometer_end: f.odometer_end ? Number(f.odometer_end) : null,
+        km: f.km !== "" ? Number(f.km) : null,
         fuel_price_override: f.fuel_price_override ? Number(f.fuel_price_override) : null,
         events: f.events || null,
       };
@@ -498,14 +489,17 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
           {distError && <span className="doc-meta" style={{ marginTop: 4, display: "block", color: "var(--danger, #e53)" }}>{distError}</span>}
         </div>
         <div className="row-2">
-          <div className="field"><label>Odometer start</label><input type="number" min="0" value={f.odometer_start} onChange={set("odometer_start")} /></div>
-          <div className="field"><label>Odometer end</label><input type="number" min="0" value={f.odometer_end} onChange={set("odometer_end")} /></div>
+          <div className="field">
+            <label>Distance (km)</label>
+            <input type="number" min="0" value={f.km} onChange={set("km")} placeholder="auto from route" />
+          </div>
+          <div className="field">
+            <label>Fuel price override (EUR/{unit})</label>
+            <input type="number" step="0.001" min="0" value={f.fuel_price_override} onChange={set("fuel_price_override")} placeholder={vehicle.fuel_price ?? ""} />
+          </div>
         </div>
-        {km != null && (
-          <p className="doc-meta">
-            Distance: <strong>{km} km</strong>
-            {cost != null && <> · Cost: <strong>{cost} EUR</strong></>}
-          </p>
+        {cost != null && (
+          <p className="doc-meta">Cost: <strong>{cost} EUR</strong></p>
         )}
         <div className="row-2">
           <div className="field"><label>Driver (Vodič)</label><input value={f.driver_name} onChange={set("driver_name")} /></div>
@@ -516,13 +510,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
             </select>
           </div>
         </div>
-        <div className="row-2">
-          <div className="field"><label>Events (Udalosti)</label><input value={f.events} onChange={set("events")} /></div>
-          <div className="field">
-            <label>Fuel price override (EUR/{unit})</label>
-            <input type="number" step="0.001" min="0" value={f.fuel_price_override} onChange={set("fuel_price_override")} placeholder={vehicle.fuel_price ?? ""} />
-          </div>
-        </div>
+        <div className="field"><label>Events (Udalosti)</label><input value={f.events} onChange={set("events")} /></div>
         <button className="btn btn-primary" disabled={busy} onClick={save}>
           {busy ? <Spinner /> : (trip ? "Save changes" : "Add trip")}
         </button>

@@ -66,9 +66,7 @@ def _serialize(trip: CarTrip, vehicle: Vehicle) -> CarTripOut:
         end_dt=trip.end_dt,
         purpose=trip.purpose,
         route=trip.route,
-        odometer_start=trip.odometer_start,
-        odometer_end=trip.odometer_end,
-        km=lb.trip_km(trip),
+        km=trip.km,
         driver_name=trip.driver_name,
         trip_type=trip.trip_type,
         events=trip.events,
@@ -83,29 +81,6 @@ def _month_range(year: int, month: int) -> tuple[datetime, datetime]:
     start = datetime(year, month, 1)
     end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
     return start, end
-
-
-def _rechain_odometers(db: Session, vehicle_id: int) -> None:
-    """Walk all trips for a vehicle sorted by start_dt and fix the odometer chain.
-
-    Each trip's km distance is preserved; only the absolute start/end values are
-    adjusted so that trip[i].odometer_start == trip[i-1].odometer_end.
-    Trips without odometer_start are skipped and break the chain at that point.
-    """
-    trips = db.scalars(
-        select(CarTrip)
-        .where(CarTrip.vehicle_id == vehicle_id, CarTrip.odometer_start.isnot(None))
-        .order_by(CarTrip.start_dt)
-    ).all()
-    for i in range(1, len(trips)):
-        prev_end = trips[i - 1].odometer_end
-        if prev_end is None:
-            break  # chain interrupted — can't continue
-        km = (trips[i].odometer_end - trips[i].odometer_start
-              if trips[i].odometer_end is not None else None)
-        trips[i].odometer_start = prev_end
-        if km is not None:
-            trips[i].odometer_end = prev_end + km
 
 
 def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) -> int:
@@ -146,16 +121,15 @@ def route_distance(payload: _RouteIn, user=Depends(get_current_user)):
 def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user)):
     vehicles = db.scalars(select(Vehicle).order_by(Vehicle.ecv)).all()
     year_start = datetime(datetime.now().year, 1, 1)
-    km_diff = CarTrip.odometer_end - CarTrip.odometer_start
     stats = {
         row.vehicle_id: row
         for row in db.execute(
             select(
                 CarTrip.vehicle_id,
-                func.sum(km_diff).label("km_total"),
-                func.sum(case((CarTrip.start_dt >= year_start, km_diff), else_=0)).label("km_ytd"),
+                func.sum(CarTrip.km).label("km_total"),
+                func.sum(case((CarTrip.start_dt >= year_start, CarTrip.km), else_=0)).label("km_ytd"),
             )
-            .where(CarTrip.odometer_start.isnot(None), CarTrip.odometer_end.isnot(None))
+            .where(CarTrip.km.isnot(None))
             .group_by(CarTrip.vehicle_id)
         ).all()
     }
@@ -167,20 +141,6 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
         out.km_ytd = int(s.km_ytd) if s and s.km_ytd else None
         result.append(out)
     return result
-
-
-@router.get("/vehicles/{vid}/last-odometer")
-def last_odometer(vid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    v = db.get(Vehicle, vid)
-    if not v:
-        raise HTTPException(404, "Vehicle not found")
-    val = db.scalar(
-        select(CarTrip.odometer_end)
-        .where(CarTrip.vehicle_id == vid, CarTrip.odometer_end.isnot(None))
-        .order_by(CarTrip.start_dt.desc())
-        .limit(1)
-    )
-    return {"odometer_end": val}
 
 
 @router.post("/vehicles", response_model=VehicleOut, status_code=201)
@@ -285,8 +245,6 @@ def create_trip(
     jnum = _next_journey_number(db, vid, payload.start_dt.year, payload.start_dt.month)
     t = CarTrip(vehicle_id=vid, journey_number=jnum, **payload.model_dump())
     db.add(t)
-    db.flush()
-    _rechain_odometers(db, vid)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -305,8 +263,6 @@ def update_trip(
     v = db.get(Vehicle, t.vehicle_id)
     for k, val in payload.model_dump(exclude_unset=True).items():
         setattr(t, k, val)
-    db.flush()
-    _rechain_odometers(db, t.vehicle_id)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -321,10 +277,7 @@ def delete_trip(
     t = db.get(CarTrip, tid)
     if not t:
         raise HTTPException(404, "Trip not found")
-    vid = t.vehicle_id
     db.delete(t)
-    db.flush()
-    _rechain_odometers(db, vid)
     db.commit()
 
 
@@ -383,7 +336,12 @@ def export_trips(
     ).all()
     if not trips:
         raise HTTPException(404, "No trips for that vehicle in this month")
-    data = lb.build_xlsx(v, list(trips))
+    prior_km = db.scalar(
+        select(func.sum(CarTrip.km))
+        .where(CarTrip.vehicle_id == vid, CarTrip.start_dt < start, CarTrip.km.isnot(None))
+    ) or 0
+    base_odometer = (v.odometer_base or 0) + int(prior_km)
+    data = lb.build_xlsx(v, list(trips), base_odometer)
 
     def _ascii(s: str) -> str:
         d = unicodedata.normalize("NFKD", s)

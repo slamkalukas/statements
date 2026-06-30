@@ -195,6 +195,7 @@ class Vehicle(Base):
     ownership: Mapped[str] = mapped_column(String(30), nullable=False, default="Firemné")
     date_added: Mapped[date | None] = mapped_column(Date, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    odometer_base: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     trips: Mapped[list["CarTrip"]] = relationship(back_populates="vehicle", cascade="all, delete-orphan")
@@ -214,8 +215,7 @@ class CarTrip(Base):
     end_dt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     purpose: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     route: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
-    odometer_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    odometer_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    km: Mapped[int | None] = mapped_column(Integer, nullable=True)
     driver_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     trip_type: Mapped[str] = mapped_column(String(30), nullable=False, default="Firemná")
     events: Mapped[str | None] = mapped_column(String(255), nullable=True)
