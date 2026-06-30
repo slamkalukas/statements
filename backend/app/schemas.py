@@ -173,6 +173,7 @@ class TravelBase(BaseModel):
     trip_date: date
     end_date: date | None = None
     purpose: str = Field(default="", max_length=255)
+    vehicle_id: int | None = None
 
 
 class TravelCreate(TravelBase):
@@ -190,6 +191,7 @@ class TravelUpdate(BaseModel):
     trip_date: date | None = None
     end_date: date | None = None
     purpose: str | None = Field(default=None, max_length=255)
+    vehicle_id: int | None = None
 
 
 class TravelOut(TravelBase):

@@ -12,12 +12,14 @@ export default function Travel() {
   const [travels, setTravels] = useState(null);
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
+  const [vehicles, setVehicles] = useState([]);
 
   useEffect(() => {
     api.get("/periods").then((ps) => {
       setPeriods(ps);
       if (ps.length) setPeriodId((cur) => cur ?? ps[0].id);
     });
+    api.get("/vehicles").then(setVehicles).catch(() => {});
   }, []);
 
   async function loadTravels(pid) {
@@ -192,6 +194,7 @@ export default function Travel() {
           period={period}
           trip={editing.id ? editing : null}
           existing={travels || []}
+          vehicles={vehicles}
           onClose={() => setEditing(null)}
           onSaved={(msg) => { setEditing(null); flash(msg); loadTravels(periodId); }}
         />
@@ -235,7 +238,7 @@ function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
   };
 }
 
-function TripModal({ period, trip, existing, onClose, onSaved }) {
+function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
   const periodId = period.id;
   const [f, setF] = useState(() => ({
     traveller_name: trip?.traveller_name || "",
@@ -243,6 +246,7 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
     trip_date: trip?.trip_date || "",
     end_date: trip?.end_date || "",
     purpose: trip?.purpose || "",
+    vehicle_id: trip?.vehicle_id ?? "",
   }));
 
   const initLegs = () => {
@@ -287,6 +291,11 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
   const repeatDates = useMemo(
     () => (repeat ? datesForWeekdays(period.year, period.month, weekdays) : []),
     [repeat, weekdays, period.year, period.month]
+  );
+
+  const hasCarLeg = useMemo(
+    () => legs.some((l) => l.transport === "Auto služobné"),
+    [legs]
   );
 
   function onNameBlur() {
@@ -345,6 +354,7 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
       traveller_name: f.traveller_name.trim(),
       traveller_address: f.traveller_address.trim(),
       purpose: f.purpose.trim(),
+      vehicle_id: f.vehicle_id ? Number(f.vehicle_id) : null,
     };
   }
 
@@ -423,6 +433,20 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
           <label>Purpose (Účel cesty)</label>
           <input value={f.purpose} onChange={set("purpose")} />
         </div>
+
+        {hasCarLeg && vehicles.length > 0 && (
+          <div className="field">
+            <label>Vehicle (Logbook)</label>
+            <select value={f.vehicle_id} onChange={set("vehicle_id")}>
+              <option value="">— auto-select first vehicle —</option>
+              {vehicles.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.ecv}{v.manufacturer ? ` · ${v.manufacturer}` : ""}{v.car_model ? ` ${v.car_model}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Legs */}
         <div>

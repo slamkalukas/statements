@@ -55,6 +55,7 @@ def serialize(t: Travel, rates: dict) -> TravelOut:
         trip_date=t.trip_date,
         end_date=t.end_date,
         purpose=t.purpose,
+        vehicle_id=t.vehicle_id,
         per_diem=float(pd),
         per_diem_computed=float(comp),
         duration_hours=travel_module.duration_hours(
@@ -87,9 +88,12 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
     if not car_legs:
         return
 
-    vehicle = db.scalar(
-        select(Vehicle).where(Vehicle.active == True).order_by(Vehicle.ecv).limit(1)
-    )
+    if travel.vehicle_id:
+        vehicle = db.get(Vehicle, travel.vehicle_id)
+    else:
+        vehicle = db.scalar(
+            select(Vehicle).where(Vehicle.active == True).order_by(Vehicle.ecv).limit(1)
+        )
     if vehicle is None:
         return  # no vehicles registered yet
 

@@ -310,7 +310,6 @@ async def import_trips(
         db.add(t)
         db.flush()
         imported += 1
-    _rechain_odometers(db, vid)
     db.commit()
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
