@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useEffect } from "react";
 
 export function Modal({ title, onClose, children, footer }) {
@@ -54,6 +54,20 @@ export function EmptyState({ title, hint, action }) {
 export function Toast({ message }) {
   if (!message) return null;
   return <div className="toast">{message}</div>;
+}
+
+export function MonthNav({ label, onPrev, onNext, disablePrev, disableNext }) {
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <button className="btn btn-ghost btn-sm" onClick={onPrev} disabled={disablePrev}>
+        <ChevronLeft size={16} />
+      </button>
+      <span style={{ fontWeight: 600, minWidth: 150, textAlign: "center" }}>{label}</span>
+      <button className="btn btn-ghost btn-sm" onClick={onNext} disabled={disableNext}>
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
 }
 
 export function StatusBadge({ status }) {

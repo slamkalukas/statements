@@ -1,16 +1,12 @@
-import { BookOpen, Car, ChevronLeft, ChevronRight, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { BookOpen, Car, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, downloadLogbook } from "../api";
-import { EmptyState, Loading, Modal, Spinner, Toast } from "../components/UI";
-import { formatAmount } from "../utils";
+import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
+import { SK_MONTHS, formatAmount } from "../utils";
 
 const FUEL_TYPES = ["Elektro", "Diesel", "Benzín", "Hybrid", "LPG", "Iné"];
 const TRIP_TYPES = ["Firemná", "Súkromná"];
 const OWNERSHIPS = ["Firemné", "Súkromné"];
-const SK_MONTHS = [
-  "Január", "Február", "Marec", "Apríl", "Máj", "Jún",
-  "Júl", "August", "September", "Október", "November", "December",
-];
 
 function fuelUnit(fuelType) {
   return (fuelType || "").toLowerCase().includes("elektr") ? "kWh" : "L";
@@ -189,13 +185,11 @@ export default function Logbook() {
 
           {/* Month navigation + actions */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button className="btn btn-ghost btn-sm" onClick={prevMonth}><ChevronLeft size={16} /></button>
-              <span style={{ fontWeight: 600, minWidth: 150, textAlign: "center" }}>
-                {SK_MONTHS[month - 1]} {year}
-              </span>
-              <button className="btn btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={16} /></button>
-            </div>
+            <MonthNav
+              label={`${SK_MONTHS[month - 1]} ${year}`}
+              onPrev={prevMonth}
+              onNext={nextMonth}
+            />
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 ref={importRef}

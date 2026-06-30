@@ -1,8 +1,8 @@
 import { Copy, Download, Pencil, Plane, Plus, Route, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadTravelReport } from "../api";
-import { EmptyState, Loading, Modal, Spinner, Toast } from "../components/UI";
-import { formatAmount, periodLabel } from "../utils";
+import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
+import { SK_MONTHS, formatAmount } from "../utils";
 
 const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "Taxi", "MHD", "Iné"];
 
@@ -63,6 +63,8 @@ export default function Travel() {
 
   if (periods === null) return <Loading />;
 
+  const periodIdx = periods.findIndex((p) => p.id === periodId);
+
   return (
     <>
       <div className="section-head">
@@ -71,15 +73,15 @@ export default function Travel() {
           <p className="page-sub">Trips (cestovné) per person, per month.</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <select
-            value={periodId ?? ""}
-            onChange={(e) => setPeriodId(Number(e.target.value))}
-            disabled={periods.length === 0}
-          >
-            {periods.map((p) => (
-              <option key={p.id} value={p.id}>{periodLabel(p.year, p.month)}</option>
-            ))}
-          </select>
+          {period && (
+            <MonthNav
+              label={`${SK_MONTHS[period.month - 1]} ${period.year}`}
+              onPrev={() => setPeriodId(periods[periodIdx + 1].id)}
+              onNext={() => setPeriodId(periods[periodIdx - 1].id)}
+              disablePrev={periodIdx >= periods.length - 1}
+              disableNext={periodIdx <= 0}
+            />
+          )}
           {!closed && period && (
             <button className="btn btn-primary" onClick={() => setEditing({})}>
               <Plus size={16} /> Add trip

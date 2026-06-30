@@ -3,6 +3,11 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+export const SK_MONTHS = [
+  "Január", "Február", "Marec", "Apríl", "Máj", "Jún",
+  "Júl", "August", "September", "Október", "November", "December",
+];
+
 export function monthName(m) {
   return MONTHS[(m - 1) % 12] || "";
 }
