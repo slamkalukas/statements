@@ -145,11 +145,6 @@ class Travel(Base):
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     purpose: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
-    depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
-    arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
-    return_depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
-    return_arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
-
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     period: Mapped["Period"] = relationship()
@@ -173,7 +168,8 @@ class TravelLeg(Base):
     from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")
-    leg_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     distance_km: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expense: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)

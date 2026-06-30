@@ -27,7 +27,8 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
         from_place=leg.from_place,
         to_place=leg.to_place,
         transport=leg.transport,
-        leg_time=leg.leg_time,
+        depart_time=leg.depart_time,
+        arrive_time=leg.arrive_time,
         distance_km=float(leg.distance_km) if leg.distance_km is not None else None,
         duration_min=leg.duration_min,
         expense=float(leg.expense) if leg.expense is not None else None,
@@ -37,10 +38,12 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
 
 def serialize(t: Travel, rates: dict) -> TravelOut:
     pd = travel_module.effective_per_diem(t, rates)
+    first_depart, last_arrive = travel_module._leg_times(t)
     comp = travel_module.computed_per_diem(
-        t.trip_date, t.depart_time, t.end_date, t.return_arrive_time, rates
+        t.trip_date, t.end_date, first_depart, last_arrive, rates
     )
     km_list = [float(leg.distance_km) for leg in t.legs if leg.distance_km is not None]
+    first_depart, last_arrive = travel_module._leg_times(t)
     return TravelOut(
         id=t.id,
         period_id=t.period_id,
@@ -49,14 +52,10 @@ def serialize(t: Travel, rates: dict) -> TravelOut:
         trip_date=t.trip_date,
         end_date=t.end_date,
         purpose=t.purpose,
-        depart_time=t.depart_time,
-        arrive_time=t.arrive_time,
-        return_depart_time=t.return_depart_time,
-        return_arrive_time=t.return_arrive_time,
         per_diem=float(pd),
         per_diem_computed=float(comp),
         duration_hours=travel_module.duration_hours(
-            t.trip_date, t.depart_time, t.end_date, t.return_arrive_time
+            t.trip_date, t.end_date, first_depart, last_arrive
         ),
         total_km=round(sum(km_list), 2) if km_list else None,
         legs=[_leg_out(leg) for leg in t.legs],
@@ -184,10 +183,11 @@ def bulk_create_travels(
 ):
     period = get_period(db, period_id)
     assert_period_open(period)
-    header = payload.model_dump(exclude={"legs", "dates"})
+    header = {k: v for k, v in payload.model_dump(exclude={"legs", "dates"}).items()
+              if k != "trip_date"}
     created: list[Travel] = []
     for d in sorted(set(payload.dates)):
-        t = Travel(period_id=period_id, trip_date=d, end_date=None, **{k: v for k, v in header.items() if k != "trip_date"})
+        t = Travel(period_id=period_id, trip_date=d, end_date=None, **header)
         db.add(t)
         created.append(t)
     db.flush()
@@ -216,8 +216,6 @@ def duplicate_travel(
         period_id=src.period_id,
         traveller_name=src.traveller_name, traveller_address=src.traveller_address,
         trip_date=src.trip_date, end_date=src.end_date, purpose=src.purpose,
-        depart_time=src.depart_time, arrive_time=src.arrive_time,
-        return_depart_time=src.return_depart_time, return_arrive_time=src.return_arrive_time,
     )
     db.add(clone)
     db.flush()
@@ -225,7 +223,8 @@ def duplicate_travel(
         db.add(TravelLeg(
             travel_id=clone.id, order_idx=leg.order_idx,
             from_place=leg.from_place, to_place=leg.to_place, transport=leg.transport,
-            leg_time=leg.leg_time, distance_km=leg.distance_km, duration_min=leg.duration_min,
+            depart_time=leg.depart_time, arrive_time=leg.arrive_time,
+            distance_km=leg.distance_km, duration_min=leg.duration_min,
             expense=leg.expense, per_diem=leg.per_diem,
         ))
     audit.record(db, user, "create", "travel", clone.id, f"duplicate of {src.id}")

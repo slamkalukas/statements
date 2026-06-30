@@ -135,9 +135,10 @@ class TravelLegBase(BaseModel):
     from_place: str = Field(default="", max_length=120)
     to_place: str = Field(default="", max_length=120)
     transport: str = Field(default="", max_length=60)
-    leg_time: time | None = None
-    expense: float | None = None   # reimbursable cost (ticket, taxi receipt, etc.)
-    per_diem: float | None = None  # stravné for this leg (None = not set)
+    depart_time: time | None = None   # when you leave from_place
+    arrive_time: time | None = None   # when you arrive at to_place
+    expense: float | None = None      # reimbursable cost (ticket, taxi receipt, etc.)
+    per_diem: float | None = None     # stravné for this leg (None = not set)
 
 
 class TravelLegCreate(TravelLegBase):
@@ -148,7 +149,8 @@ class TravelLegUpdate(BaseModel):
     from_place: str | None = Field(default=None, max_length=120)
     to_place: str | None = Field(default=None, max_length=120)
     transport: str | None = Field(default=None, max_length=60)
-    leg_time: time | None = None
+    depart_time: time | None = None
+    arrive_time: time | None = None
     expense: float | None = None
     per_diem: float | None = None
     order_idx: int | None = None
@@ -160,7 +162,7 @@ class TravelLegOut(TravelLegBase):
     travel_id: int
     order_idx: int
     distance_km: float | None = None
-    duration_min: int | None = None
+    duration_min: int | None = None  # one-way drive time rounded to 20 min (ORS)
 
 
 class TravelBase(BaseModel):
@@ -169,10 +171,6 @@ class TravelBase(BaseModel):
     trip_date: date
     end_date: date | None = None
     purpose: str = Field(default="", max_length=255)
-    depart_time: time | None = None
-    arrive_time: time | None = None
-    return_depart_time: time | None = None
-    return_arrive_time: time | None = None
 
 
 class TravelCreate(TravelBase):
@@ -190,19 +188,15 @@ class TravelUpdate(BaseModel):
     trip_date: date | None = None
     end_date: date | None = None
     purpose: str | None = Field(default=None, max_length=255)
-    depart_time: time | None = None
-    arrive_time: time | None = None
-    return_depart_time: time | None = None
-    return_arrive_time: time | None = None
 
 
 class TravelOut(TravelBase):
     id: int
     period_id: int
-    per_diem: float         # effective: sum of leg per_diems, or duration-based fallback
+    per_diem: float          # effective: sum of leg per_diems, or duration-based fallback
     per_diem_computed: float
-    duration_hours: float | None = None
-    total_km: float | None = None   # sum of all leg distance_km
+    duration_hours: float | None = None  # derived from first leg depart → last leg arrive
+    total_km: float | None = None        # sum of all leg distance_km
     legs: list[TravelLegOut] = []
 
 
