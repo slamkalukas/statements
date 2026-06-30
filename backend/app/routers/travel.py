@@ -184,7 +184,7 @@ def bulk_create_travels(
     period = get_period(db, period_id)
     assert_period_open(period)
     header = {k: v for k, v in payload.model_dump(exclude={"legs", "dates"}).items()
-              if k != "trip_date"}
+              if k not in {"trip_date", "end_date"}}
     created: list[Travel] = []
     for d in sorted(set(payload.dates)):
         t = Travel(period_id=period_id, trip_date=d, end_date=None, **header)

@@ -186,8 +186,11 @@ def build_xlsx(name: str, address: str, year: int, month: int,
 
     for t in travels:
         end = t.end_date or t.trip_date
+        has_leg_per_diem = any(leg.per_diem is not None for leg in t.legs)
+        trip_pd = float(effective_per_diem(t, rates)) if not has_leg_per_diem else None
+
         for i, leg in enumerate(t.legs):
-            # Each leg = 2 rows: Odchod (departure) then Príchod (arrival)
+            is_last_leg = (i == len(t.legs) - 1)
             leg_date = _fmt_date(t.trip_date)
 
             # Row 1: Odchod from_place at depart_time
@@ -200,12 +203,18 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             r += 1
 
             # Row 2: Príchod to_place at arrive_time — expense/per_diem go here
-            arrive_date = _fmt_date(end) if i == len(t.legs) - 1 and end != t.trip_date else leg_date
+            arrive_date = _fmt_date(end) if is_last_leg and end != t.trip_date else leg_date
             s2.cell(r, 2).value = arrive_date
             s2.cell(r, 3).value = f"Príchod {leg.to_place}".strip()
             s2.cell(r, 4).value = _fmt_time(leg.arrive_time)
+            # Per-diem: per-leg if set; otherwise show trip total on last Príchod row only
+            pd_value = None
             if leg.per_diem is not None:
-                s2.cell(r, 6).value = float(leg.per_diem)
+                pd_value = float(leg.per_diem)
+            elif is_last_leg and trip_pd is not None:
+                pd_value = trip_pd
+            if pd_value is not None:
+                s2.cell(r, 6).value = pd_value
                 s2.cell(r, 6).number_format = "0.00"
             if leg.expense is not None:
                 s2.cell(r, 7).value = float(leg.expense)
