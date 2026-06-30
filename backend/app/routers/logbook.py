@@ -85,6 +85,29 @@ def _month_range(year: int, month: int) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _rechain_odometers(db: Session, vehicle_id: int) -> None:
+    """Walk all trips for a vehicle sorted by start_dt and fix the odometer chain.
+
+    Each trip's km distance is preserved; only the absolute start/end values are
+    adjusted so that trip[i].odometer_start == trip[i-1].odometer_end.
+    Trips without odometer_start are skipped and break the chain at that point.
+    """
+    trips = db.scalars(
+        select(CarTrip)
+        .where(CarTrip.vehicle_id == vehicle_id, CarTrip.odometer_start.isnot(None))
+        .order_by(CarTrip.start_dt)
+    ).all()
+    for i in range(1, len(trips)):
+        prev_end = trips[i - 1].odometer_end
+        if prev_end is None:
+            break  # chain interrupted — can't continue
+        km = (trips[i].odometer_end - trips[i].odometer_start
+              if trips[i].odometer_end is not None else None)
+        trips[i].odometer_start = prev_end
+        if km is not None:
+            trips[i].odometer_end = prev_end + km
+
+
 def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) -> int:
     base = year * 100000 + month * 1000
     max_num = db.scalar(
@@ -262,6 +285,8 @@ def create_trip(
     jnum = _next_journey_number(db, vid, payload.start_dt.year, payload.start_dt.month)
     t = CarTrip(vehicle_id=vid, journey_number=jnum, **payload.model_dump())
     db.add(t)
+    db.flush()
+    _rechain_odometers(db, vid)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -280,6 +305,8 @@ def update_trip(
     v = db.get(Vehicle, t.vehicle_id)
     for k, val in payload.model_dump(exclude_unset=True).items():
         setattr(t, k, val)
+    db.flush()
+    _rechain_odometers(db, t.vehicle_id)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -294,7 +321,10 @@ def delete_trip(
     t = db.get(CarTrip, tid)
     if not t:
         raise HTTPException(404, "Trip not found")
+    vid = t.vehicle_id
     db.delete(t)
+    db.flush()
+    _rechain_odometers(db, vid)
     db.commit()
 
 
@@ -327,6 +357,7 @@ async def import_trips(
         db.add(t)
         db.flush()
         imported += 1
+    _rechain_odometers(db, vid)
     db.commit()
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
