@@ -151,18 +151,31 @@ export default function Logbook() {
       {vehicle && (
         <>
           {/* Vehicle info strip */}
-          <div className="card card-pad" style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-              <Car size={18} />
-              <strong>{vehicle.ecv}</strong>
-              <span className="doc-meta">{vehicle.manufacturer} {vehicle.car_model}</span>
-              {vehicle.fuel_type && <span className="doc-meta">· {vehicle.fuel_type}</span>}
-              {vehicle.consumption != null && (
-                <span className="doc-meta">· {vehicle.consumption} {fuelUnit(vehicle.fuel_type)}/100km</span>
-              )}
-              {vehicle.fuel_price != null && (
-                <span className="doc-meta">· {vehicle.fuel_price} EUR/{fuelUnit(vehicle.fuel_type)}</span>
-              )}
+          <div className="card card-pad" style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <Car size={18} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "1rem", letterSpacing: "0.04em" }}>{vehicle.ecv}</div>
+                  <div className="doc-meta">{vehicle.manufacturer} {vehicle.car_model}</div>
+                </div>
+              </div>
+              <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 20, display: "flex", gap: 20 }}>
+                <div>
+                  <div className="doc-meta">Od 1.1.{new Date().getFullYear()}</div>
+                  <div style={{ fontWeight: 600 }}>{vehicle.km_ytd != null ? `${vehicle.km_ytd.toLocaleString()} km` : "— km"}</div>
+                </div>
+                <div>
+                  <div className="doc-meta">Celkovo</div>
+                  <div style={{ fontWeight: 600 }}>{vehicle.km_total != null ? `${vehicle.km_total.toLocaleString()} km` : "— km"}</div>
+                </div>
+                {vehicle.fuel_type && (
+                  <div>
+                    <div className="doc-meta">Palivo</div>
+                    <div style={{ fontWeight: 600 }}>{vehicle.fuel_type}</div>
+                  </div>
+                )}
+              </div>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setEditVehicle(vehicle)}>

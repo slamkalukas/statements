@@ -2,7 +2,7 @@ import unicodedata
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from .. import logbook as lb
@@ -62,7 +62,29 @@ def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) ->
 
 @router.get("/vehicles", response_model=list[VehicleOut])
 def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return db.scalars(select(Vehicle).order_by(Vehicle.ecv)).all()
+    vehicles = db.scalars(select(Vehicle).order_by(Vehicle.ecv)).all()
+    year_start = datetime(datetime.now().year, 1, 1)
+    km_diff = CarTrip.odometer_end - CarTrip.odometer_start
+    stats = {
+        row.vehicle_id: row
+        for row in db.execute(
+            select(
+                CarTrip.vehicle_id,
+                func.sum(km_diff).label("km_total"),
+                func.sum(case((CarTrip.start_dt >= year_start, km_diff), else_=0)).label("km_ytd"),
+            )
+            .where(CarTrip.odometer_start.isnot(None), CarTrip.odometer_end.isnot(None))
+            .group_by(CarTrip.vehicle_id)
+        ).all()
+    }
+    result = []
+    for v in vehicles:
+        out = VehicleOut.model_validate(v)
+        s = stats.get(v.id)
+        out.km_total = int(s.km_total) if s and s.km_total is not None else None
+        out.km_ytd = int(s.km_ytd) if s and s.km_ytd else None
+        result.append(out)
+    return result
 
 
 @router.post("/vehicles", response_model=VehicleOut, status_code=201)

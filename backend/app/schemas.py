@@ -244,6 +244,8 @@ class VehicleOut(VehicleBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     created_at: datetime | None = None
+    km_total: int | None = None
+    km_ytd: int | None = None
 
 
 class CarTripBase(BaseModel):
