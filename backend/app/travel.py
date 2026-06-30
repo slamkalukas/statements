@@ -134,7 +134,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center")
 
-    travels = sorted(travels, key=lambda t: (t.trip_date, t.depart_time or time(0, 0)))
+    travels = sorted(travels, key=lambda t: (t.trip_date, t.legs[0].depart_time if t.legs else time(0, 0)))
 
     wb = Workbook()
 
