@@ -380,7 +380,7 @@ def export_travels(
     data = travel_module.build_xlsx(name, address, period.year, period.month, travels, rates)
 
     month_name = travel_module._SK_MONTHS.get(period.month, str(period.month))
-    fname = _ascii(f"Cestovne_{month_name}_{period.year}_{name}") + ".xlsx"
+    fname = _ascii(f"{name}_Cestovne_{month_name}_{period.year}") + ".xlsx"
     return Response(
         content=data,
         media_type=_XLSX_MIME,
