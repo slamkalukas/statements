@@ -95,6 +95,19 @@ def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) ->
     return (max_num or base) + 1
 
 
+def _renumber_month(db: Session, vehicle_id: int, year: int, month: int) -> None:
+    base = year * 100000 + month * 1000
+    trips = db.scalars(
+        select(CarTrip).where(
+            CarTrip.vehicle_id == vehicle_id,
+            CarTrip.journey_number >= base,
+            CarTrip.journey_number < base + 1000,
+        ).order_by(CarTrip.journey_number)
+    ).all()
+    for i, trip in enumerate(trips, start=1):
+        trip.journey_number = base + i
+
+
 # ---- Route distance ----
 
 @router.post("/route-distance")
@@ -277,7 +290,13 @@ def delete_trip(
     t = db.get(CarTrip, tid)
     if not t:
         raise HTTPException(404, "Trip not found")
+    vid = t.vehicle_id
+    jnum = t.journey_number
+    year = jnum // 100000
+    month = (jnum % 100000) // 1000
     db.delete(t)
+    db.flush()
+    _renumber_month(db, vid, year, month)
     db.commit()
 
 
