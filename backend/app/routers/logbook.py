@@ -1,7 +1,10 @@
+import re
 import unicodedata
 from datetime import datetime
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +19,42 @@ from ..schemas import (
 
 router = APIRouter(prefix="/api", tags=["logbook"])
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_NOMINATIM = "https://nominatim.openstreetmap.org/search"
+_OSRM = "http://router.project-osrm.org/route/v1/driving"
+
+
+def _parse_waypoints(route: str) -> list[str]:
+    parts = re.split(r"\s*[>→]\s*|\s+-\s+", route.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _geocode(city: str) -> tuple[float, float] | None:
+    try:
+        r = httpx.get(
+            _NOMINATIM,
+            params={"q": city, "format": "json", "limit": 1},
+            headers={"User-Agent": "statements-app/1.0"},
+            timeout=5.0,
+        )
+        data = r.json()
+        if data:
+            return float(data[0]["lon"]), float(data[0]["lat"])
+    except Exception:
+        pass
+    return None
+
+
+def _driving_km(coords: list[tuple[float, float]]) -> float:
+    waypoints = ";".join(f"{lon},{lat}" for lon, lat in coords)
+    r = httpx.get(f"{_OSRM}/{waypoints}", params={"overview": "false"}, timeout=10.0)
+    data = r.json()
+    if data.get("code") != "Ok":
+        raise ValueError(data.get("message", "Routing failed"))
+    return data["routes"][0]["distance"] / 1000
+
+
+class _RouteIn(BaseModel):
+    route: str
 
 
 def _serialize(trip: CarTrip, vehicle: Vehicle) -> CarTripOut:
@@ -58,6 +97,26 @@ def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) ->
     return (max_num or base) + 1
 
 
+# ---- Route distance ----
+
+@router.post("/route-distance")
+def route_distance(payload: _RouteIn, user=Depends(get_current_user)):
+    cities = _parse_waypoints(payload.route)
+    if len(cities) < 2:
+        raise HTTPException(400, "Need at least 2 waypoints — separate cities with >")
+    coords: list[tuple[float, float]] = []
+    for city in cities:
+        c = _geocode(city)
+        if c is None:
+            raise HTTPException(400, f"Could not find location: {city}")
+        coords.append(c)
+    try:
+        km = _driving_km(coords)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"km": round(km)}
+
+
 # ---- Vehicles ----
 
 @router.get("/vehicles", response_model=list[VehicleOut])
@@ -85,6 +144,20 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
         out.km_ytd = int(s.km_ytd) if s and s.km_ytd else None
         result.append(out)
     return result
+
+
+@router.get("/vehicles/{vid}/last-odometer")
+def last_odometer(vid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    v = db.get(Vehicle, vid)
+    if not v:
+        raise HTTPException(404, "Vehicle not found")
+    val = db.scalar(
+        select(CarTrip.odometer_end)
+        .where(CarTrip.vehicle_id == vid, CarTrip.odometer_end.isnot(None))
+        .order_by(CarTrip.start_dt.desc())
+        .limit(1)
+    )
+    return {"odometer_end": val}
 
 
 @router.post("/vehicles", response_model=VehicleOut, status_code=201)

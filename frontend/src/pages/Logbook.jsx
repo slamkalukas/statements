@@ -415,8 +415,42 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
     fuel_price_override: trip?.fuel_price_override != null ? String(trip.fuel_price_override) : "",
   });
   const [busy, setBusy] = useState(false);
+  const [calcDist, setCalcDist] = useState(false);
+  const [distError, setDistError] = useState("");
   const [error, setError] = useState("");
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+
+  // Auto-fill odometer_start from last trip when adding new
+  useEffect(() => {
+    if (trip) return;
+    api.get(`/vehicles/${vehicle.id}/last-odometer`).then((r) => {
+      if (r.odometer_end != null) {
+        setF((s) => ({ ...s, odometer_start: String(r.odometer_end) }));
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Auto-calculate odometer_end from route (debounced 800ms)
+  useEffect(() => {
+    const route = f.route.trim();
+    if (route.length < 5 || !route.includes(">") && !route.includes("→")) return;
+    setDistError("");
+    const timer = setTimeout(async () => {
+      setCalcDist(true);
+      try {
+        const res = await api.post("/route-distance", { route });
+        setF((s) => {
+          const start = Number(s.odometer_start) || 0;
+          return { ...s, odometer_end: String(start + res.km) };
+        });
+      } catch (e) {
+        setDistError(e.message);
+      } finally {
+        setCalcDist(false);
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [f.route]);
 
   const km = f.odometer_start && f.odometer_end
     ? Math.max(0, Number(f.odometer_end) - Number(f.odometer_start))
@@ -457,7 +491,12 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
           <div className="field"><label>End (Koniec)</label><input type="datetime-local" value={f.end_dt} onChange={set("end_dt")} /></div>
         </div>
         <div className="field"><label>Purpose (Účel jazdy)</label><input value={f.purpose} onChange={set("purpose")} placeholder="Stretnutie s klientom" /></div>
-        <div className="field"><label>Route (Trasa)</label><input value={f.route} onChange={set("route")} placeholder="Nitra > Wien > Nitra" /></div>
+        <div className="field">
+          <label>Route (Trasa) — separate cities with &gt;</label>
+          <input value={f.route} onChange={set("route")} placeholder="Nitra, SK > Wien, AT > Nitra, SK" />
+          {calcDist && <span className="doc-meta" style={{ marginTop: 4, display: "block" }}><Spinner /> Calculating distance…</span>}
+          {distError && <span className="doc-meta" style={{ marginTop: 4, display: "block", color: "var(--danger, #e53)" }}>{distError}</span>}
+        </div>
         <div className="row-2">
           <div className="field"><label>Odometer start</label><input type="number" min="0" value={f.odometer_start} onChange={set("odometer_start")} /></div>
           <div className="field"><label>Odometer end</label><input type="number" min="0" value={f.odometer_end} onChange={set("odometer_end")} /></div>
