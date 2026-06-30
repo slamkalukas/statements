@@ -108,12 +108,17 @@ export default function Travel() {
 
       {groups.map(([name, trips]) => {
         const total = trips.reduce((s, t) => s + (t.per_diem || 0), 0);
+        const totalKm = trips.reduce((s, t) => s + (t.distance_km != null ? t.distance_km * 2 : 0), 0);
+        const hasKm = trips.some((t) => t.distance_km != null);
         return (
           <div key={name} className="card card-pad" style={{ marginBottom: 16 }}>
             <div className="card-head" style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Plane size={17} /> {name}
-                <span className="doc-meta">· {trips.length} trip{trips.length === 1 ? "" : "s"} · {formatAmount(total)} stravné</span>
+                <span className="doc-meta">
+                  · {trips.length} trip{trips.length === 1 ? "" : "s"} · {formatAmount(total)} stravné
+                  {hasKm && ` · ${totalKm.toFixed(1)} km celkom`}
+                </span>
               </h3>
               <button className="btn btn-secondary btn-sm" onClick={() => downloadTravelReport(periodId, name)}>
                 <Download size={14} /> Export xlsx
@@ -128,6 +133,7 @@ export default function Travel() {
                     <th>Purpose</th>
                     <th>Times</th>
                     <th>Transport</th>
+                    <th className="right">km (tam+sp.)</th>
                     <th className="right">Stravné</th>
                     <th></th>
                   </tr>
@@ -143,6 +149,13 @@ export default function Travel() {
                       <td>{t.purpose}</td>
                       <td className="num">{fmtTimes(t)}</td>
                       <td>{t.transport}</td>
+                      <td className="right num">
+                        {t.distance_km != null ? (
+                          <span title={`${t.duration_min != null ? t.duration_min + " min one-way" : ""}`}>
+                            {(t.distance_km * 2).toFixed(1)}
+                          </span>
+                        ) : "—"}
+                      </td>
                       <td className="right">
                         <span className="num">{formatAmount(t.per_diem)}</span>
                         {t.per_diem_override != null && <span className="doc-meta" title="Manual override"> ✎</span>}

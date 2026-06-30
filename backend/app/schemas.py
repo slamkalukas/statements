@@ -178,6 +178,8 @@ class TravelOut(TravelBase):
     per_diem: float            # effective (override or computed)
     per_diem_computed: float   # what the duration-based bands give
     duration_hours: float | None = None
+    distance_km: float | None = None    # one-way km (round-trip = 2×)
+    duration_min: int | None = None     # one-way drive time, rounded to 20 min
 
 
 class PerDiemRates(BaseModel):

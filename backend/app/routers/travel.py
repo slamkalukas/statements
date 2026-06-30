@@ -1,10 +1,11 @@
 import unicodedata
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit, travel
+from .. import audit, routing, travel
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import Travel, User
@@ -37,7 +38,38 @@ def serialize(t: Travel, rates: dict) -> TravelOut:
         per_diem=float(pd),
         per_diem_computed=float(comp),
         duration_hours=travel.duration_hours(t.trip_date, t.depart_time, t.end_date, t.return_arrive_time),
+        distance_km=float(t.distance_km) if t.distance_km is not None else None,
+        duration_min=t.duration_min,
     )
+
+
+class RoutingKeyStatus(BaseModel):
+    configured: bool
+
+
+class RoutingKeyUpdate(BaseModel):
+    key: str
+
+
+@router.get("/travel/routing-key", response_model=RoutingKeyStatus)
+def get_routing_key_status(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Returns whether an ORS API key is saved — never echoes the key itself."""
+    key = routing.get_api_key(db)
+    return RoutingKeyStatus(configured=key is not None)
+
+
+@router.patch("/travel/routing-key", response_model=RoutingKeyStatus)
+def set_routing_key(
+    body: RoutingKeyUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not body.key.strip():
+        raise HTTPException(status_code=422, detail="Key must not be empty")
+    routing.set_api_key(db, body.key)
+    audit.record(db, user, "update", "setting", None, "ors_api_key")
+    db.commit()
+    return RoutingKeyStatus(configured=True)
 
 
 @router.get("/travel/per-diem-rates", response_model=PerDiemRates)
@@ -102,6 +134,7 @@ def create_travel(
     t = Travel(period_id=period_id, **payload.model_dump())
     db.add(t)
     db.flush()
+    routing.auto_route(db, t)
     audit.record(db, user, "create", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
@@ -181,10 +214,14 @@ def update_travel(
     assert_period_open(get_period(db, t.period_id))
     data = payload.model_dump(exclude_unset=True)
     clear = data.pop("clear_override", False)
+    old_route = (t.from_place, t.to_place)
     for key, value in data.items():
         setattr(t, key, value)
     if clear:
         t.per_diem_override = None
+    # Re-route if places changed
+    if (t.from_place, t.to_place) != old_route:
+        routing.auto_route(db, t)
     audit.record(db, user, "update", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
@@ -204,6 +241,26 @@ def delete_travel(
     audit.record(db, user, "delete", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.delete(t)
     db.commit()
+
+
+@router.post("/travels/{travel_id}/route", response_model=TravelOut)
+def recalculate_route(
+    travel_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Manually trigger ORS routing for a single trip."""
+    t = db.get(Travel, travel_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if not routing.get_api_key(db):
+        raise HTTPException(status_code=422, detail="No routing API key configured")
+    updated = routing.auto_route(db, t)
+    if not updated:
+        raise HTTPException(status_code=422, detail="Could not calculate route — check from/to place names")
+    db.commit()
+    db.refresh(t)
+    return serialize(t, travel.get_rates(db))
 
 
 def _ascii(s: str) -> str:

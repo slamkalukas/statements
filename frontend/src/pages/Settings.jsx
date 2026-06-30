@@ -1,4 +1,4 @@
-import { FolderOpen, HardDrive, Plane, Save } from "lucide-react";
+import { FolderOpen, HardDrive, MapPin, Plane, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Spinner, Toast } from "../components/UI";
@@ -19,13 +19,36 @@ export default function Settings() {
   const [rates, setRates] = useState(null);
   const [savingRates, setSavingRates] = useState(false);
 
+  const [orsConfigured, setOrsConfigured] = useState(null);
+  const [orsKey, setOrsKey] = useState("");
+  const [savingOrs, setSavingOrs] = useState(false);
+
   useEffect(() => {
     api.get("/storage").then((s) => {
       setStorage(s);
       setLayout(s.layout);
     }).catch(() => {});
     api.get("/travel/per-diem-rates").then(setRates).catch(() => {});
+    api.get("/travel/routing-key").then((r) => setOrsConfigured(r.configured)).catch(() => {});
   }, []);
+
+  async function saveOrsKey(e) {
+    e.preventDefault();
+    if (!orsKey.trim()) return;
+    setSavingOrs(true);
+    try {
+      const r = await api.patch("/travel/routing-key", { key: orsKey.trim() });
+      setOrsConfigured(r.configured);
+      setOrsKey("");
+      setToast("Routing API key saved");
+      setTimeout(() => setToast(""), 2200);
+    } catch (err) {
+      setToast("Failed to save: " + err.message);
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setSavingOrs(false);
+    }
+  }
 
   async function saveRates(e) {
     e.preventDefault();
@@ -187,6 +210,52 @@ export default function Settings() {
         ) : (
           <Spinner />
         )}
+      </div>
+
+      <div className="card card-pad" style={{ maxWidth: 620, marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+          <MapPin size={18} /> Routing (km calculation)
+        </h3>
+        <p className="page-sub" style={{ marginBottom: 16 }}>
+          OpenRouteService API key for auto-calculating trip distance and drive time.
+          The key is stored in the database and never shown again.
+        </p>
+        <div className="stack" style={{ gap: 12 }}>
+          <div className="path-row">
+            <div className="label">Status</div>
+            {orsConfigured === null ? (
+              <Spinner />
+            ) : orsConfigured ? (
+              <span style={{ color: "var(--success, green)", fontWeight: 600 }}>Configured</span>
+            ) : (
+              <span className="doc-meta">Not set — routing will be skipped</span>
+            )}
+          </div>
+          <form onSubmit={saveOrsKey}>
+            <div className="path-row" style={{ alignItems: "flex-end" }}>
+              <div className="label" style={{ flexShrink: 0 }}>{orsConfigured ? "Replace key" : "Enter key"}</div>
+              <div style={{ flex: 1, display: "flex", gap: 8 }}>
+                <input
+                  type="password"
+                  value={orsKey}
+                  onChange={(e) => setOrsKey(e.target.value)}
+                  placeholder="Paste ORS API key…"
+                  autoComplete="off"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-secondary"
+                  type="submit"
+                  disabled={savingOrs || !orsKey.trim()}
+                  style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  {savingOrs ? <Spinner /> : <Save size={14} />}
+                  Save
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
       </div>
 
       <div className="card card-pad" style={{ maxWidth: 460 }}>
