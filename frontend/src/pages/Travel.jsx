@@ -228,6 +228,7 @@ function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
   return {
     from_place: fromPlace, to_place: toPlace,
     transport: "Auto služobné",
+    leg_date: "",
     depart_time: "", arrive_time: "",
     expense: "", per_diem: "",
     order_idx,
@@ -250,6 +251,7 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
         from_place: l.from_place,
         to_place: l.to_place,
         transport: l.transport,
+        leg_date: l.leg_date || "",
         depart_time: (l.depart_time || "").slice(0, 5),
         arrive_time: (l.arrive_time || "").slice(0, 5),
         expense: l.expense != null ? String(l.expense) : "",
@@ -329,6 +331,7 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
       from_place: l.from_place.trim(),
       to_place: l.to_place.trim(),
       transport: l.transport,
+      leg_date: l.leg_date || null,
       depart_time: l.depart_time || null,
       arrive_time: l.arrive_time || null,
       expense: l.expense === "" ? null : Number(l.expense),
@@ -469,6 +472,16 @@ function TripModal({ period, trip, existing, onClose, onSaved }) {
                   >
                     {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
+                  {f.end_date && f.end_date !== f.trip_date && (
+                    <input
+                      type="date" style={{ width: 140 }}
+                      title="Date of this leg"
+                      min={f.trip_date || undefined}
+                      max={f.end_date || undefined}
+                      value={leg.leg_date}
+                      onChange={(e) => setLeg(idx, "leg_date", e.target.value)}
+                    />
+                  )}
                   <div style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 0 auto" }}>
                     <input
                       type="time" style={{ width: 100 }}

@@ -168,6 +168,7 @@ class TravelLeg(Base):
     from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    leg_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     distance_km: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)

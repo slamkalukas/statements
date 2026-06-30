@@ -27,6 +27,7 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
         from_place=leg.from_place,
         to_place=leg.to_place,
         transport=leg.transport,
+        leg_date=leg.leg_date,
         depart_time=leg.depart_time,
         arrive_time=leg.arrive_time,
         distance_km=float(leg.distance_km) if leg.distance_km is not None else None,
