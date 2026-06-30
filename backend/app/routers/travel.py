@@ -1,14 +1,16 @@
 import unicodedata
+from datetime import datetime
+from datetime import time as dtime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import audit, routing, travel as travel_module
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
-from ..models import Travel, TravelLeg, User
+from ..models import CarTrip, Travel, TravelLeg, User, Vehicle
 from ..schemas import (
     BulkTravelCreate, PerDiemRates, TravelCreate, TravelLegCreate,
     TravelLegOut, TravelLegUpdate, TravelOut, TravelUpdate,
@@ -72,6 +74,79 @@ def _create_legs(db: Session, travel_id: int, legs: list[TravelLegCreate]) -> No
         db.add(leg)
         db.flush()
         routing.auto_route(db, leg)
+
+
+def _sync_logbook(db: Session, travel: Travel) -> None:
+    """Create or update the CarTrip linked to this travel when it uses a company car.
+
+    Triggered after any change to the travel or its legs. If no leg uses a
+    company car transport the function is a no-op (deleting the logbook entry
+    on transport change is intentionally avoided to prevent data loss).
+    """
+    car_legs = [l for l in travel.legs if "firemn" in (l.transport or "").lower()]
+    if not car_legs:
+        return
+
+    vehicle = db.scalar(
+        select(Vehicle).where(Vehicle.active == True).order_by(Vehicle.ecv).limit(1)
+    )
+    if vehicle is None:
+        return  # no vehicles registered yet
+
+    # Route: chain all company-car leg places
+    places: list[str] = []
+    for leg in car_legs:
+        if not places and leg.from_place:
+            places.append(leg.from_place)
+        if leg.to_place:
+            places.append(leg.to_place)
+    route = " > ".join(places)
+
+    # km: sum of leg distances
+    km_total = (
+        round(sum(float(l.distance_km) for l in car_legs if l.distance_km))
+        if any(l.distance_km for l in car_legs)
+        else None
+    )
+
+    # Datetimes from first/last company-car leg
+    first, last = car_legs[0], car_legs[-1]
+    trip_date = travel.trip_date
+    end_date = travel.end_date or trip_date
+    start_dt = datetime.combine(first.leg_date or trip_date, first.depart_time or dtime(8, 0))
+    end_dt = datetime.combine(last.leg_date or end_date, last.arrive_time or dtime(18, 0))
+
+    existing = db.scalar(select(CarTrip).where(CarTrip.travel_id == travel.id))
+    if existing:
+        existing.start_dt = start_dt
+        existing.end_dt = end_dt
+        existing.route = route
+        existing.purpose = travel.purpose or route
+        existing.km = km_total
+        existing.driver_name = travel.traveller_name or ""
+        db.flush()
+    else:
+        base = start_dt.year * 100000 + start_dt.month * 1000
+        max_num = db.scalar(
+            select(func.max(CarTrip.journey_number)).where(
+                CarTrip.vehicle_id == vehicle.id,
+                CarTrip.journey_number >= base,
+                CarTrip.journey_number < base + 1000,
+            )
+        )
+        db.add(CarTrip(
+            vehicle_id=vehicle.id,
+            journey_number=(max_num or base) + 1,
+            travel_id=travel.id,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            purpose=travel.purpose or route,
+            route=route,
+            km=km_total,
+            driver_name=travel.traveller_name or "",
+            trip_type="Firemná",
+        ))
+        db.flush()
 
 
 # ---- Per-diem rates ----
@@ -169,6 +244,8 @@ def create_travel(
     db.add(t)
     db.flush()
     _create_legs(db, t.id, payload.legs)
+    db.flush()
+    _sync_logbook(db, t)
     audit.record(db, user, "create", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
@@ -194,6 +271,8 @@ def bulk_create_travels(
     db.flush()
     for t in created:
         _create_legs(db, t.id, payload.legs)
+        db.flush()
+        _sync_logbook(db, t)
     audit.record(db, user, "create", "travel", None,
                  f"bulk {len(created)} trips ({payload.traveller_name})")
     db.commit()
@@ -296,6 +375,7 @@ def add_leg(
     db.add(leg)
     db.flush()
     routing.auto_route(db, leg)
+    _sync_logbook(db, t)
     audit.record(db, user, "create", "travel_leg", leg.id,
                  f"{leg.from_place}→{leg.to_place} (trip {travel_id})")
     db.commit()
@@ -317,6 +397,7 @@ def update_leg(
         setattr(leg, key, value)
     if (leg.from_place, leg.to_place, leg.transport) != old_route:
         routing.auto_route(db, leg)
+    _sync_logbook(db, t)
     db.commit()
     db.refresh(t)
     return serialize(t, travel_module.get_rates(db))
@@ -331,6 +412,9 @@ def delete_leg(
     leg, t = _get_leg_and_trip(leg_id, db)
     assert_period_open(get_period(db, t.period_id))
     db.delete(leg)
+    db.flush()
+    db.refresh(t)
+    _sync_logbook(db, t)
     db.commit()
     db.refresh(t)
     return serialize(t, travel_module.get_rates(db))
