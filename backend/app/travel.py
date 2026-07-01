@@ -23,6 +23,15 @@ _SK_MONTHS = {
     7: "Júl", 8: "August", 9: "September", 10: "Október", 11: "November", 12: "December",
 }
 
+_COMPANY_CAR_MARKERS = ("firemn", "služobn", "sluzob")
+
+
+def is_company_car_transport(transport: str | None) -> bool:
+    """True for transport labels that mean "company car" (Auto firemné/služobné),
+    matched loosely enough to survive diacritics/spelling variants."""
+    t = (transport or "").lower()
+    return any(marker in t for marker in _COMPANY_CAR_MARKERS)
+
 
 def get_rates(db) -> dict:
     row = db.query(Setting).filter(Setting.key == RATES_KEY).first()

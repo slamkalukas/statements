@@ -2,7 +2,7 @@ import { Copy, Download, Pencil, Plane, Plus, Route, Trash2 } from "lucide-react
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, downloadTravelReport } from "../api";
 import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
-import { SK_MONTHS, formatAmount } from "../utils";
+import { SK_MONTHS, formatAmount, getLastVehicleId, rememberVehicleId } from "../utils";
 
 const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "Taxi", "MHD", "Iné"];
 
@@ -312,7 +312,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     trip_date: trip?.trip_date || "",
     end_date: trip?.end_date || "",
     purpose: trip?.purpose || "",
-    vehicle_id: trip?.vehicle_id ?? vehicles[0]?.id ?? "",
+    vehicle_id: trip?.vehicle_id ?? getLastVehicleId(vehicles) ?? "",
   }));
 
   const initLegs = () => {
@@ -505,8 +505,14 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
         {hasCarLeg && vehicles.length > 0 && (
           <div className="field">
             <label>Vehicle (Logbook)</label>
-            <select value={f.vehicle_id} onChange={set("vehicle_id")}>
-              <option value="">— auto-select first vehicle —</option>
+            <select
+              value={f.vehicle_id}
+              onChange={(e) => {
+                set("vehicle_id")(e);
+                if (e.target.value) rememberVehicleId(Number(e.target.value));
+              }}
+            >
+              <option value="">— auto-select —</option>
               {vehicles.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.ecv}{v.manufacturer ? ` · ${v.manufacturer}` : ""}{v.car_model ? ` ${v.car_model}` : ""}

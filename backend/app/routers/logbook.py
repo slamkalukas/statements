@@ -3,10 +3,11 @@ import os
 import re
 import unicodedata
 from datetime import datetime
+from functools import lru_cache
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -30,7 +31,10 @@ def _parse_waypoints(route: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+@lru_cache(maxsize=512)
 def _geocode(city: str) -> tuple[float, float] | None:
+    """City coordinates rarely change, and the same waypoints get re-typed
+    across trips — cache to stay within Nominatim's ~1 req/sec usage policy."""
     try:
         r = httpx.get(
             _NOMINATIM,
@@ -85,32 +89,6 @@ def _month_range(year: int, month: int) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) -> int:
-    base = year * 100000 + month * 1000
-    max_num = db.scalar(
-        select(func.max(CarTrip.journey_number)).where(
-            CarTrip.vehicle_id == vehicle_id,
-            CarTrip.journey_number >= base,
-            CarTrip.journey_number < base + 1000,
-        )
-    )
-    return (max_num or base) + 1
-
-
-def _renumber_month(db: Session, vehicle_id: int, year: int, month: int) -> None:
-    base = year * 100000 + month * 1000
-    start, end = _month_range(year, month)
-    trips = db.scalars(
-        select(CarTrip).where(
-            CarTrip.vehicle_id == vehicle_id,
-            CarTrip.start_dt >= start,
-            CarTrip.start_dt < end,
-        ).order_by(CarTrip.start_dt)
-    ).all()
-    for i, trip in enumerate(trips, start=1):
-        trip.journey_number = base + i
-
-
 # ---- Route distance ----
 
 @router.post("/route-distance")
@@ -137,6 +115,46 @@ class _AiTripIn(BaseModel):
     description: str = Field(max_length=500)
     home_city: str = Field(default="", max_length=120)
     date: str = Field(default="", max_length=10)  # YYYY-MM-DD
+
+
+class _AiTripSuggestion(BaseModel):
+    """The AI's free-form JSON, coerced into a shape the frontend can trust.
+
+    Individual bad fields (an odd time format, a non-numeric km, an unknown
+    trip_type) are nulled/defaulted rather than failing the whole request —
+    a partially-usable suggestion beats losing the feature over one bad field.
+    """
+    purpose: str = ""
+    route: str = ""
+    km: int | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    trip_type: str = "Firemná"
+
+    @field_validator("purpose", "route", mode="before")
+    @classmethod
+    def _coerce_str(cls, v):
+        return v if isinstance(v, str) else ""
+
+    @field_validator("km", mode="before")
+    @classmethod
+    def _coerce_km(cls, v):
+        if v in (None, ""):
+            return None
+        try:
+            return int(round(float(v)))
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("start_time", "end_time", mode="before")
+    @classmethod
+    def _coerce_time(cls, v):
+        return v if isinstance(v, str) and re.fullmatch(r"\d{2}:\d{2}", v) else None
+
+    @field_validator("trip_type", mode="before")
+    @classmethod
+    def _coerce_trip_type(cls, v):
+        return v if v in ("Firemná", "Súkromná") else "Firemná"
 
 
 _AI_PROMPT = """\
@@ -175,7 +193,7 @@ def _ai_generate(prompt: str) -> str:
         raise HTTPException(502, f"AI error: {detail}")
 
 
-@router.post("/ai-trip-suggest")
+@router.post("/ai-trip-suggest", response_model=_AiTripSuggestion)
 def ai_trip_suggest(
     payload: _AiTripIn,
     user=Depends(get_current_user),
@@ -189,15 +207,20 @@ def ai_trip_suggest(
     if "```" in text:
         text = re.sub(r"```[a-z]*", "", text).replace("```", "").strip()
     try:
-        return json.loads(text)
+        raw = json.loads(text)
     except json.JSONDecodeError:
         raise HTTPException(500, f"AI returned unparseable response: {text[:300]}")
+    if not isinstance(raw, dict):
+        raise HTTPException(500, f"AI returned unparseable response: {text[:300]}")
+    return _AiTripSuggestion.model_validate(raw)
 
 
 # ---- Place autocomplete ----
 
-@router.get("/suggest-places")
-def suggest_places(q: str = Query(..., min_length=2), user=Depends(get_current_user)):
+@lru_cache(maxsize=512)
+def _suggest_places_cached(q: str) -> tuple[str, ...]:
+    """Autocomplete fires on every keystroke — cache repeated queries so we
+    don't hammer Nominatim's public (~1 req/sec) endpoint."""
     try:
         r = httpx.get(
             _NOMINATIM,
@@ -207,7 +230,7 @@ def suggest_places(q: str = Query(..., min_length=2), user=Depends(get_current_u
         )
         results = r.json()
     except Exception:
-        return []
+        return ()
 
     seen: set[str] = set()
     out: list[str] = []
@@ -224,7 +247,12 @@ def suggest_places(q: str = Query(..., min_length=2), user=Depends(get_current_u
             out.append(label)
         if len(out) == 5:
             break
-    return out
+    return tuple(out)
+
+
+@router.get("/suggest-places")
+def suggest_places(q: str = Query(..., min_length=2), user=Depends(get_current_user)):
+    return list(_suggest_places_cached(q))
 
 
 # ---- Vehicles ----
@@ -357,11 +385,11 @@ def create_trip(
     v = db.get(Vehicle, vid)
     if not v:
         raise HTTPException(404, "Vehicle not found")
-    jnum = _next_journey_number(db, vid, payload.start_dt.year, payload.start_dt.month)
+    jnum = lb.next_journey_number(db, vid, payload.start_dt.year, payload.start_dt.month)
     t = CarTrip(vehicle_id=vid, journey_number=jnum, **payload.model_dump())
     db.add(t)
     db.flush()
-    _renumber_month(db, vid, payload.start_dt.year, payload.start_dt.month)
+    lb.renumber_month(db, vid, payload.start_dt.year, payload.start_dt.month)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -382,10 +410,10 @@ def update_trip(
     for k, val in payload.model_dump(exclude_unset=True).items():
         setattr(t, k, val)
     db.flush()
-    _renumber_month(db, t.vehicle_id, old_year, old_month)
+    lb.renumber_month(db, t.vehicle_id, old_year, old_month)
     new_year, new_month = t.start_dt.year, t.start_dt.month
     if (new_year, new_month) != (old_year, old_month):
-        _renumber_month(db, t.vehicle_id, new_year, new_month)
+        lb.renumber_month(db, t.vehicle_id, new_year, new_month)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -406,7 +434,7 @@ def delete_trip(
     month = (jnum % 100000) // 1000
     db.delete(t)
     db.flush()
-    _renumber_month(db, vid, year, month)
+    lb.renumber_month(db, vid, year, month)
     db.commit()
 
 
@@ -429,17 +457,24 @@ async def import_trips(
     imported = 0
     skipped = 0
     errors: list[str] = []
+    touched_months: set[tuple[int, int]] = set()
     try:
         for i, row in enumerate(rows, 1):
             if not row.get("start_dt"):
                 skipped += 1
                 errors.append(f"Row {i}: missing start date")
                 continue
-            jnum = _next_journey_number(db, vid, row["start_dt"].year, row["start_dt"].month)
+            year, month = row["start_dt"].year, row["start_dt"].month
+            jnum = lb.next_journey_number(db, vid, year, month)
             t = CarTrip(vehicle_id=vid, journey_number=jnum, **row)
             db.add(t)
             db.flush()
+            touched_months.add((year, month))
             imported += 1
+        # Rows may arrive out of date order — renumber each affected month
+        # chronologically rather than by insertion order.
+        for year, month in touched_months:
+            lb.renumber_month(db, vid, year, month)
         db.commit()
     except Exception as e:
         db.rollback()

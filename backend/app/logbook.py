@@ -2,6 +2,9 @@
 import io
 from datetime import datetime
 
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from .models import CarTrip, Vehicle
 from .travel import COMPANY
 
@@ -9,6 +12,45 @@ _SK_MONTHS = {
     1: "Január", 2: "Február", 3: "Marec", 4: "Apríl", 5: "Máj", 6: "Jún",
     7: "Júl", 8: "August", 9: "September", 10: "Október", 11: "November", 12: "December",
 }
+
+
+def _month_range(year: int, month: int) -> tuple[datetime, datetime]:
+    start = datetime(year, month, 1)
+    end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+    return start, end
+
+
+def next_journey_number(db: Session, vehicle_id: int, year: int, month: int) -> int:
+    """The next journey number for a month, assuming append-only insertion order.
+
+    Callers that might insert out of chronological order (or move a trip
+    between months) must follow up with renumber_month to keep numbers
+    contiguous and sorted by start_dt.
+    """
+    base = year * 100000 + month * 1000
+    max_num = db.scalar(
+        select(func.max(CarTrip.journey_number)).where(
+            CarTrip.vehicle_id == vehicle_id,
+            CarTrip.journey_number >= base,
+            CarTrip.journey_number < base + 1000,
+        )
+    )
+    return (max_num or base) + 1
+
+
+def renumber_month(db: Session, vehicle_id: int, year: int, month: int) -> None:
+    """Reassign contiguous journey numbers for a month, ordered by start_dt."""
+    base = year * 100000 + month * 1000
+    start, end = _month_range(year, month)
+    trips = db.scalars(
+        select(CarTrip).where(
+            CarTrip.vehicle_id == vehicle_id,
+            CarTrip.start_dt >= start,
+            CarTrip.start_dt < end,
+        ).order_by(CarTrip.start_dt)
+    ).all()
+    for i, trip in enumerate(trips, start=1):
+        trip.journey_number = base + i
 
 
 def fuel_unit(vehicle: Vehicle) -> str:

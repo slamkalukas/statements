@@ -5,10 +5,10 @@ from datetime import time as dtime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit, routing, travel as travel_module
+from .. import audit, logbook as lb, routing, travel as travel_module
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import CarTrip, Period, Travel, TravelLeg, User, Vehicle
@@ -85,7 +85,7 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
     company car transport the function is a no-op (deleting the logbook entry
     on transport change is intentionally avoided to prevent data loss).
     """
-    car_legs = [l for l in travel.legs if any(k in (l.transport or "").lower() for k in ("firemn", "služobn", "sluzob"))]
+    car_legs = [l for l in travel.legs if travel_module.is_company_car_transport(l.transport)]
     if not car_legs:
         return
 
@@ -123,6 +123,7 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
 
     existing = db.scalar(select(CarTrip).where(CarTrip.travel_id == travel.id))
     if existing:
+        old_year, old_month = existing.start_dt.year, existing.start_dt.month
         existing.start_dt = start_dt
         existing.end_dt = end_dt
         existing.route = route
@@ -130,18 +131,14 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
         existing.km = km_total
         existing.driver_name = travel.traveller_name or ""
         db.flush()
+        lb.renumber_month(db, existing.vehicle_id, old_year, old_month)
+        if (start_dt.year, start_dt.month) != (old_year, old_month):
+            lb.renumber_month(db, existing.vehicle_id, start_dt.year, start_dt.month)
     else:
-        base = start_dt.year * 100000 + start_dt.month * 1000
-        max_num = db.scalar(
-            select(func.max(CarTrip.journey_number)).where(
-                CarTrip.vehicle_id == vehicle.id,
-                CarTrip.journey_number >= base,
-                CarTrip.journey_number < base + 1000,
-            )
-        )
+        jnum = lb.next_journey_number(db, vehicle.id, start_dt.year, start_dt.month)
         db.add(CarTrip(
             vehicle_id=vehicle.id,
-            journey_number=(max_num or base) + 1,
+            journey_number=jnum,
             travel_id=travel.id,
             start_dt=start_dt,
             end_dt=end_dt,
@@ -152,6 +149,7 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
             trip_type="Firemná",
         ))
         db.flush()
+        lb.renumber_month(db, vehicle.id, start_dt.year, start_dt.month)
 
 
 # ---- Per-diem rates ----

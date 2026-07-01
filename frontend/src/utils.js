@@ -31,6 +31,19 @@ export function formatAmount(value) {
   return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+const LAST_VEHICLE_KEY = "statements.lastVehicleId";
+
+/** Last vehicle the user picked, if it's still in the given list — else the first one. */
+export function getLastVehicleId(vehicles) {
+  if (!vehicles?.length) return null;
+  const saved = Number(localStorage.getItem(LAST_VEHICLE_KEY));
+  return vehicles.some((v) => v.id === saved) ? saved : vehicles[0].id;
+}
+
+export function rememberVehicleId(id) {
+  if (id) localStorage.setItem(LAST_VEHICLE_KEY, String(id));
+}
+
 export const KIND_LABELS = {
   bank_statement: "Bank statement",
   invoice: "Invoice",

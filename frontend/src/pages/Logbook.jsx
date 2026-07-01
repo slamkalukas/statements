@@ -2,7 +2,7 @@ import { BookOpen, Car, Copy, Download, MapPin, Pencil, Plus, Sparkles, Trash2, 
 import { useEffect, useRef, useState } from "react";
 import { api, downloadLogbook } from "../api";
 import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
-import { SK_MONTHS, formatAmount } from "../utils";
+import { SK_MONTHS, formatAmount, getLastVehicleId, rememberVehicleId } from "../utils";
 
 const FUEL_TYPES = ["Elektro", "Diesel", "Benzín", "Hybrid", "LPG", "Iné"];
 const TRIP_TYPES = ["Firemná", "Súkromná"];
@@ -48,7 +48,7 @@ export default function Logbook() {
   useEffect(() => {
     api.get("/vehicles").then((vs) => {
       setVehicles(vs);
-      if (vs.length) setVehicleId((cur) => cur ?? vs[0].id);
+      setVehicleId((cur) => cur ?? getLastVehicleId(vs));
     });
   }, []);
 
@@ -104,7 +104,7 @@ export default function Logbook() {
       flash("Vehicle deleted");
       const vs = await api.get("/vehicles");
       setVehicles(vs);
-      setVehicleId(vs.length ? vs[0].id : null);
+      setVehicleId(getLastVehicleId(vs));
     } catch (e) { flash(e.message); }
   }
 
@@ -129,7 +129,14 @@ export default function Logbook() {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {vehicles.length > 0 && (
-            <select value={vehicleId ?? ""} onChange={(e) => setVehicleId(Number(e.target.value))}>
+            <select
+              value={vehicleId ?? ""}
+              onChange={(e) => {
+                const id = Number(e.target.value);
+                setVehicleId(id);
+                rememberVehicleId(id);
+              }}
+            >
               {vehicles.map((v) => (
                 <option key={v.id} value={v.id}>{v.ecv} — {v.manufacturer} {v.car_model}</option>
               ))}
@@ -311,6 +318,7 @@ export default function Logbook() {
             api.get("/vehicles").then((vs) => {
               setVehicles(vs);
               setVehicleId(v.id);
+              rememberVehicleId(v.id);
             });
           }}
         />
@@ -345,7 +353,11 @@ export default function Logbook() {
           defaultYear={year}
           defaultMonth={month}
           onClose={() => setAiModal(false)}
-          onGenerated={(prefill) => { setAiModal(false); setDuplicateSrc(prefill); }}
+          onGenerated={(prefill) => {
+            setAiModal(false);
+            setDuplicateSrc(prefill);
+            if (prefill.km == null) flash("AI couldn't estimate the distance — check km manually.");
+          }}
         />
       )}
 
