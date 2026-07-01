@@ -298,6 +298,7 @@ function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
     transport: "Auto služobné",
     leg_date: "",
     depart_time: "", arrive_time: "",
+    distance_km: "",
     expense: "", per_diem: "",
     order_idx,
   };
@@ -323,6 +324,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
         leg_date: l.leg_date || "",
         depart_time: (l.depart_time || "").slice(0, 5),
         arrive_time: (l.arrive_time || "").slice(0, 5),
+        distance_km: l.distance_km != null ? String(l.distance_km) : "",
         expense: l.expense != null ? String(l.expense) : "",
         per_diem: l.per_diem != null ? String(l.per_diem) : "",
         order_idx: l.order_idx,
@@ -408,6 +410,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
       leg_date: l.leg_date || null,
       depart_time: l.depart_time || null,
       arrive_time: l.arrive_time || null,
+      distance_km: l.distance_km === "" ? null : Number(l.distance_km),
       expense: l.expense === "" ? null : Number(l.expense),
       per_diem: l.per_diem === "" ? null : Number(l.per_diem),
       order_idx: i,
@@ -585,8 +588,15 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
                     />
                   </div>
                 </div>
-                {/* Expense + per-diem row */}
+                {/* Expense + per-diem + km row */}
                 <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                  <input
+                    type="number" step="1" min="0"
+                    style={{ flex: "0 0 80px" }}
+                    placeholder="km"
+                    value={leg.distance_km}
+                    onChange={(e) => setLeg(idx, "distance_km", e.target.value)}
+                  />
                   <input
                     type="number" step="0.01" min="0"
                     style={{ flex: "1 1 100px" }}
