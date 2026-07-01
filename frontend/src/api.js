@@ -79,11 +79,10 @@ export async function downloadTravelReport(periodId, name) {
   );
 }
 
-/** Download the Kniha jázd xlsx for a vehicle and month. */
-export async function downloadLogbook(vehicleId, year, month, ecv) {
-  const mm = String(month).padStart(2, "0");
+/** Download the full Kniha jázd xlsx for a vehicle (all trips). */
+export async function downloadLogbook(vehicleId, ecv) {
   await downloadBlob(
-    `/api/vehicles/${vehicleId}/trips/export?year=${year}&month=${month}`,
-    `Kniha_jazd_${ecv}_${year}_${mm}.xlsx`
+    `/api/vehicles/${vehicleId}/trips/export`,
+    `Kniha_jazd_${ecv}.xlsx`
   );
 }

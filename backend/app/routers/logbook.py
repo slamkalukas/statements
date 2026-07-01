@@ -376,29 +376,32 @@ async def import_trips(
 @router.get("/vehicles/{vid}/trips/export")
 def export_trips(
     vid: int,
-    year: int = Query(...),
-    month: int = Query(...),
+    year: int = Query(None),
+    month: int = Query(None),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     v = db.get(Vehicle, vid)
     if not v:
         raise HTTPException(404, "Vehicle not found")
-    start, end = _month_range(year, month)
-    trips = db.scalars(
-        select(CarTrip).where(
+    if year and month:
+        start, end = _month_range(year, month)
+        q = select(CarTrip).where(
             CarTrip.vehicle_id == vid,
             CarTrip.start_dt >= start,
             CarTrip.start_dt < end,
-        ).order_by(CarTrip.start_dt)
-    ).all()
+        )
+        prior_km = db.scalar(
+            select(func.sum(CarTrip.km))
+            .where(CarTrip.vehicle_id == vid, CarTrip.start_dt < start, CarTrip.km.isnot(None))
+        ) or 0
+        base_odometer = (v.odometer_base or 0) + int(prior_km)
+    else:
+        q = select(CarTrip).where(CarTrip.vehicle_id == vid)
+        base_odometer = v.odometer_base or 0
+    trips = db.scalars(q.order_by(CarTrip.start_dt)).all()
     if not trips:
-        raise HTTPException(404, "No trips for that vehicle in this month")
-    prior_km = db.scalar(
-        select(func.sum(CarTrip.km))
-        .where(CarTrip.vehicle_id == vid, CarTrip.start_dt < start, CarTrip.km.isnot(None))
-    ) or 0
-    base_odometer = (v.odometer_base or 0) + int(prior_km)
+        raise HTTPException(404, "No trips recorded for this vehicle")
     data = lb.build_xlsx(v, list(trips), base_odometer)
 
     def _ascii(s: str) -> str:

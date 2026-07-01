@@ -91,7 +91,7 @@ export default function Logbook() {
 
   async function handleExport() {
     setExporting(true);
-    try { await downloadLogbook(vehicleId, year, month, vehicle.ecv); }
+    try { await downloadLogbook(vehicleId, vehicle.ecv); }
     catch (e) { flash(e.message); }
     finally { setExporting(false); }
   }
