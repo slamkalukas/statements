@@ -495,6 +495,7 @@ def create_travel_from_trip(
                 transport="Auto služobné", leg_date=trip.start_dt.date(),
                 depart_time=depart if i == 0 else None,
                 arrive_time=arrive if i == n_legs - 1 else None,
+                distance_km=trip.km if i == 0 else None,
             ))
     else:
         db.add(TravelLeg(
@@ -502,6 +503,7 @@ def create_travel_from_trip(
             from_place=parts[0] if parts else "", to_place="",
             transport="Auto služobné", leg_date=trip.start_dt.date(),
             depart_time=depart, arrive_time=arrive,
+            distance_km=trip.km,
         ))
 
     db.flush()
