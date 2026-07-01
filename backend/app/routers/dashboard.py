@@ -61,9 +61,13 @@ def summary(
     }
     total_car_trips = sum(car_counts.values())
 
-    current_year = datetime.now().year
+    now = datetime.now()
+    current_year = now.year
+    show_years = {current_year}
+    if now.month <= 3:
+        show_years.add(current_year - 1)
     recent = []
-    for p in [p for p in periods if p.year == current_year]:
+    for p in [p for p in periods if p.year in show_years]:
         po = serialize_period(p, db)
         po.travel_count = travel_counts.get(p.id, 0)
         po.car_trip_count = car_counts.get((p.year, p.month), 0)
