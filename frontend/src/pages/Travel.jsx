@@ -312,7 +312,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     trip_date: trip?.trip_date || "",
     end_date: trip?.end_date || "",
     purpose: trip?.purpose || "",
-    vehicle_id: trip?.vehicle_id ?? "",
+    vehicle_id: trip?.vehicle_id ?? vehicles[0]?.id ?? "",
   }));
 
   const initLegs = () => {
