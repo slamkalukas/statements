@@ -115,6 +115,18 @@ def route_distance(payload: _RouteIn, user=Depends(get_current_user)):
     cities = _parse_waypoints(payload.route)
     if len(cities) < 2:
         raise HTTPException(400, "Need at least 2 waypoints — separate cities with >")
+    coords: list[tuple[float, float]] = []
+    for city in cities:
+        c = _geocode(city)
+        if c is None:
+            raise HTTPException(400, f"Could not find location: {city}")
+        coords.append(c)
+    try:
+        km = _driving_km(coords)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"km": round(km)}
+
 
 # ---- Place autocomplete ----
 
@@ -147,17 +159,6 @@ def suggest_places(q: str = Query(..., min_length=2), user=Depends(get_current_u
         if len(out) == 5:
             break
     return out
-    coords: list[tuple[float, float]] = []
-    for city in cities:
-        c = _geocode(city)
-        if c is None:
-            raise HTTPException(400, f"Could not find location: {city}")
-        coords.append(c)
-    try:
-        km = _driving_km(coords)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"km": round(km)}
 
 
 # ---- Vehicles ----
@@ -182,7 +183,10 @@ def list_vehicles(db: Session = Depends(get_db), user=Depends(get_current_user))
     for v in vehicles:
         out = VehicleOut.model_validate(v)
         s = stats.get(v.id)
-        out.km_total = int(s.km_total) if s and s.km_total is not None else None
+        base = v.odometer_base or 0
+        trip_km = int(s.km_total) if s and s.km_total is not None else 0
+        total = base + trip_km
+        out.km_total = total if total > 0 else None
         out.km_ytd = int(s.km_ytd) if s and s.km_ytd else None
         result.append(out)
     return result
