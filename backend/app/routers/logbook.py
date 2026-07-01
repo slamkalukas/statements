@@ -99,12 +99,13 @@ def _next_journey_number(db: Session, vehicle_id: int, year: int, month: int) ->
 
 def _renumber_month(db: Session, vehicle_id: int, year: int, month: int) -> None:
     base = year * 100000 + month * 1000
+    start, end = _month_range(year, month)
     trips = db.scalars(
         select(CarTrip).where(
             CarTrip.vehicle_id == vehicle_id,
-            CarTrip.journey_number >= base,
-            CarTrip.journey_number < base + 1000,
-        ).order_by(CarTrip.journey_number)
+            CarTrip.start_dt >= start,
+            CarTrip.start_dt < end,
+        ).order_by(CarTrip.start_dt)
     ).all()
     for i, trip in enumerate(trips, start=1):
         trip.journey_number = base + i
@@ -359,6 +360,8 @@ def create_trip(
     jnum = _next_journey_number(db, vid, payload.start_dt.year, payload.start_dt.month)
     t = CarTrip(vehicle_id=vid, journey_number=jnum, **payload.model_dump())
     db.add(t)
+    db.flush()
+    _renumber_month(db, vid, payload.start_dt.year, payload.start_dt.month)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
@@ -375,8 +378,14 @@ def update_trip(
     if not t:
         raise HTTPException(404, "Trip not found")
     v = db.get(Vehicle, t.vehicle_id)
+    old_year, old_month = t.start_dt.year, t.start_dt.month
     for k, val in payload.model_dump(exclude_unset=True).items():
         setattr(t, k, val)
+    db.flush()
+    _renumber_month(db, t.vehicle_id, old_year, old_month)
+    new_year, new_month = t.start_dt.year, t.start_dt.month
+    if (new_year, new_month) != (old_year, old_month):
+        _renumber_month(db, t.vehicle_id, new_year, new_month)
     db.commit()
     db.refresh(t)
     return _serialize(t, v)
