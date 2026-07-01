@@ -244,7 +244,12 @@ export default function Logbook() {
                         <td className="num" style={{ whiteSpace: "nowrap" }}>{fmtDt(t.end_dt)}</td>
                         <td>{t.purpose}</td>
                         <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t.route}>
-                          {t.route || <span className="doc-meta">—</span>}
+                          {(() => {
+                            const parts = (t.route || "").split(/\s*[>→]\s*/).map((s) => s.trim()).filter(Boolean);
+                            if (!parts.length) return <span className="doc-meta">—</span>;
+                            const dests = parts.slice(1, -1);
+                            return <span>{dests.length ? dests.join(" → ") : parts[parts.length - 1]}</span>;
+                          })()}
                         </td>
                         <td className="right num">{t.km ?? "—"}</td>
                         <td>{t.driver_name}</td>
