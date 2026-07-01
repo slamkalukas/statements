@@ -55,7 +55,6 @@ services:
       OCR_ENABLED: ${OCR_ENABLED:-1}
       OCR_LANG: ${OCR_LANG:-slk+eng}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       # The external documents folder. Everything you upload is filed here.
       - ${DOCUMENTS_DIR_HOST:-./documents}:/data/documents

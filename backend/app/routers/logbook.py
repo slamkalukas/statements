@@ -154,37 +154,24 @@ Description: {description}"""
 
 
 def _ai_generate(prompt: str) -> str:
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    gemini_key = os.getenv("GEMINI_API_KEY")
-
-    if anthropic_key:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            msg = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return msg.content[0].text.strip()
-        except Exception as e:
-            import anthropic as _a
-            detail = str(e)
-            if isinstance(e, _a.APIStatusError) and e.body:
-                detail = (e.body.get("error") or {}).get("message") or detail
-            raise HTTPException(502, f"AI error (Anthropic): {detail}")
-
-    if gemini_key:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            response = model.generate_content(prompt)
-            return response.text.strip()
-        except Exception as e:
-            raise HTTPException(502, f"AI error (Gemini): {e}")
-
-    raise HTTPException(503, "No AI API key configured — set ANTHROPIC_API_KEY or GEMINI_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "ANTHROPIC_API_KEY not configured on the server")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        import anthropic as _a
+        detail = str(e)
+        if isinstance(e, _a.APIStatusError) and e.body:
+            detail = (e.body.get("error") or {}).get("message") or detail
+        raise HTTPException(502, f"AI error: {detail}")
 
 
 @router.post("/ai-trip-suggest")
