@@ -220,11 +220,15 @@ def ai_trip_suggest(
 @lru_cache(maxsize=512)
 def _suggest_places_cached(q: str) -> tuple[str, ...]:
     """Autocomplete fires on every keystroke — cache repeated queries so we
-    don't hammer Nominatim's public (~1 req/sec) endpoint."""
+    don't hammer Nominatim's public (~1 req/sec) endpoint.
+
+    Returns Nominatim's full display_name rather than collapsing to just a
+    city — that way street addresses and named POIs (shops, offices,
+    hotels...) show up as suggestions, not only city centers."""
     try:
         r = httpx.get(
             _NOMINATIM,
-            params={"q": q, "format": "json", "limit": 7, "addressdetails": 1},
+            params={"q": q, "format": "json", "limit": 7},
             headers={"User-Agent": "statements-app/1.0"},
             timeout=5.0,
         )
@@ -235,14 +239,8 @@ def _suggest_places_cached(q: str) -> tuple[str, ...]:
     seen: set[str] = set()
     out: list[str] = []
     for item in results:
-        addr = item.get("address", {})
-        city = (
-            addr.get("city") or addr.get("town") or addr.get("village")
-            or addr.get("municipality") or item["display_name"].split(",")[0].strip()
-        )
-        country = addr.get("country", "")
-        label = f"{city}, {country}" if country else city
-        if label not in seen:
+        label = (item.get("display_name") or "").strip()
+        if label and label not in seen:
             seen.add(label)
             out.append(label)
         if len(out) == 5:

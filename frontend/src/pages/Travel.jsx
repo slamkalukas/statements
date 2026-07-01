@@ -276,7 +276,11 @@ function PlaceInput({ value, onChange, readOnly, placeholder, title, style }) {
               key={i}
               className="place-suggestion"
               onMouseDown={() => pick(s)}
-              style={{ padding: "7px 10px", cursor: "pointer", fontSize: 13 }}
+              title={s}
+              style={{
+                padding: "7px 10px", cursor: "pointer", fontSize: 13,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}
             >
               {s}
             </div>
