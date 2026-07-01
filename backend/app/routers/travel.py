@@ -483,18 +483,25 @@ def create_travel_from_trip(
     db.add(t)
     db.flush()
 
+    depart = trip.start_dt.time()
+    arrive = trip.end_dt.time() if trip.end_dt else None
+    n_legs = max(len(parts) - 1, 1)
+
     if len(parts) >= 2:
         for i in range(len(parts) - 1):
             db.add(TravelLeg(
                 travel_id=t.id, order_idx=i,
                 from_place=parts[i], to_place=parts[i + 1],
                 transport="Auto služobné", leg_date=trip.start_dt.date(),
+                depart_time=depart if i == 0 else None,
+                arrive_time=arrive if i == n_legs - 1 else None,
             ))
     else:
         db.add(TravelLeg(
             travel_id=t.id, order_idx=0,
             from_place=parts[0] if parts else "", to_place="",
             transport="Auto služobné", leg_date=trip.start_dt.date(),
+            depart_time=depart, arrive_time=arrive,
         ))
 
     db.flush()
