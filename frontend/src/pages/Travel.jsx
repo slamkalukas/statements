@@ -148,16 +148,16 @@ export default function Travel() {
                         )}
                       </td>
                       <td>
-                        {t.legs.length === 0 && <span className="doc-meta">—</span>}
-                        {t.legs.length === 1 && (
-                          <span>{t.legs[0].from_place} → {t.legs[0].to_place}</span>
-                        )}
-                        {t.legs.length > 1 && (
-                          <span title={t.legs.map((l) => `${l.from_place}→${l.to_place}`).join(", ")}>
-                            {t.legs[0].from_place} → {t.legs[t.legs.length - 1].to_place}
-                            <span className="doc-meta"> ({t.legs.length} legs)</span>
-                          </span>
-                        )}
+                        {t.legs.length === 0
+                          ? <span className="doc-meta">—</span>
+                          : (() => {
+                              const dests = t.legs.slice(0, -1).map((l) => l.to_place).filter(Boolean);
+                              const label = dests.length
+                                ? dests.join(" → ")
+                                : (t.legs[t.legs.length - 1].to_place || "—");
+                              return <span>{label}</span>;
+                            })()
+                        }
                       </td>
                       <td>{t.purpose}</td>
                       <td className="num">{fmtTimes(t)}</td>
