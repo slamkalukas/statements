@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import extract, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -59,8 +61,9 @@ def summary(
     }
     total_car_trips = sum(car_counts.values())
 
+    current_year = datetime.now().year
     recent = []
-    for p in periods[:6]:
+    for p in [p for p in periods if p.year == current_year]:
         po = serialize_period(p, db)
         po.travel_count = travel_counts.get(p.id, 0)
         po.car_trip_count = car_counts.get((p.year, p.month), 0)
