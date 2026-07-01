@@ -64,6 +64,8 @@ class PeriodOut(ORMModel):
     outgoing_count: int = 0      # outgoing (payment) lines parsed from the statement
     missing_count: int = 0       # outgoing lines still needing a document — the report
     no_doc_count: int = 0        # outgoing lines marked as not needing a document (e.g. fees)
+    travel_count: int = 0        # travel trips in this month
+    car_trip_count: int = 0      # logbook drives (with km) in this month
 
 
 # ---- Documents ----
@@ -338,4 +340,6 @@ class DashboardSummary(BaseModel):
     no_statement: int          # months with no statement imported yet
     months_with_missing: int   # months that have unmatched outgoing payments
     total_missing: int         # total unmatched outgoing payments across all months
+    total_travels: int = 0     # travel trips across all months
+    total_car_trips: int = 0   # logbook drives (with km) across all months
     recent_periods: list[PeriodOut]

@@ -1,10 +1,10 @@
-import { CalendarDays, FileText, FolderOpen, TriangleAlert } from "lucide-react";
+import { CalendarDays, Car, MapPin, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { EmptyState, Loading, StatusBadge } from "../components/UI";
-import { formatBytes, periodLabel } from "../utils";
+import { periodLabel } from "../utils";
 
 function reconcileBadge(p) {
   if (!p.has_statement) return <span className="tag">No statement</span>;
@@ -34,8 +34,8 @@ export default function Dashboard() {
   const tiles = [
     { label: "Missing documents", value: data.total_missing, icon: TriangleAlert, alert: data.total_missing > 0 },
     { label: "Months tracked", value: data.periods_tracked, icon: CalendarDays },
-    { label: "Documents", value: data.total_documents, icon: FileText },
-    { label: "Stored", value: formatBytes(data.total_size), icon: FolderOpen },
+    { label: "Travel trips", value: data.total_travels, icon: MapPin },
+    { label: "Logbook drives", value: data.total_car_trips, icon: Car },
   ];
 
   return (
@@ -100,8 +100,8 @@ export default function Dashboard() {
                 <th>Month</th>
                 <th>Status</th>
                 <th>Reconciliation</th>
-                <th className="right">Documents</th>
-                <th className="right">Size</th>
+                <th className="right">Trips</th>
+                <th className="right">Drives</th>
               </tr>
             </thead>
             <tbody>
@@ -112,8 +112,8 @@ export default function Dashboard() {
                     <StatusBadge status={p.status} />
                   </td>
                   <td>{reconcileBadge(p)}</td>
-                  <td className="right">{p.document_count}</td>
-                  <td className="right">{formatBytes(p.total_size)}</td>
+                  <td className="right">{p.travel_count || "—"}</td>
+                  <td className="right">{p.car_trip_count || "—"}</td>
                 </tr>
               ))}
             </tbody>

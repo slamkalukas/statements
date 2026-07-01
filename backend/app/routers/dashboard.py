@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import extract, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Period, User
+from ..models import CarTrip, Period, Travel, User
 from ..schemas import DashboardSummary
 from .periods import serialize as serialize_period
 
@@ -36,6 +36,36 @@ def summary(
     total_missing = sum(missing(p) for p in periods)
     months_with_missing = sum(1 for p in periods if missing(p) > 0)
 
+    # Travel trips per period
+    travel_rows = db.execute(
+        select(Travel.period_id, func.count(Travel.id).label("cnt"))
+        .group_by(Travel.period_id)
+    ).all()
+    travel_counts: dict[int, int] = {row.period_id: int(row.cnt) for row in travel_rows}
+    total_travels = sum(travel_counts.values())
+
+    # Logbook drives (with km) per year+month
+    car_rows = db.execute(
+        select(
+            extract("year", CarTrip.start_dt).label("yr"),
+            extract("month", CarTrip.start_dt).label("mo"),
+            func.count(CarTrip.id).label("cnt"),
+        )
+        .where(CarTrip.km.isnot(None))
+        .group_by("yr", "mo")
+    ).all()
+    car_counts: dict[tuple[int, int], int] = {
+        (int(row.yr), int(row.mo)): int(row.cnt) for row in car_rows
+    }
+    total_car_trips = sum(car_counts.values())
+
+    recent = []
+    for p in periods[:6]:
+        po = serialize_period(p, db)
+        po.travel_count = travel_counts.get(p.id, 0)
+        po.car_trip_count = car_counts.get((p.year, p.month), 0)
+        recent.append(po)
+
     return DashboardSummary(
         periods_tracked=len(periods),
         open_periods=open_periods,
@@ -44,5 +74,7 @@ def summary(
         no_statement=no_statement,
         months_with_missing=months_with_missing,
         total_missing=total_missing,
-        recent_periods=[serialize_period(p, db) for p in periods[:6]],
+        total_travels=total_travels,
+        total_car_trips=total_car_trips,
+        recent_periods=recent,
     )
