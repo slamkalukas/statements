@@ -533,7 +533,8 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
 
 function CreateTravelModal({ trip, onClose, onSaved }) {
   const [name, setName] = useState(trip.driver_name || "");
-  const [address, setAddress] = useState("");
+  const firstPlace = (trip.route || "").split(/\s*[>→]\s*/).map((s) => s.trim()).find(Boolean) || "";
+  const [address, setAddress] = useState(firstPlace);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
