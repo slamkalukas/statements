@@ -409,7 +409,8 @@ def export_trips(
         out = "".join(c for c in d if not unicodedata.combining(c) and ord(c) < 128)
         return "".join(c if c.isalnum() else "_" for c in out).strip("_") or "logbook"
 
-    fname = _ascii(f"Kniha_jazd_{v.ecv}_{year}_{month:02d}") + ".xlsx"
+    suffix = f"_{year}_{month:02d}" if year and month else ""
+    fname = _ascii(f"Kniha_jazd_{v.ecv}{suffix}") + ".xlsx"
     return Response(
         content=data,
         media_type=_XLSX_MIME,
