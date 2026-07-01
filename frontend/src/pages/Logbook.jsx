@@ -41,6 +41,7 @@ export default function Logbook() {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [createTravelTrip, setCreateTravelTrip] = useState(null);
+  const [duplicateSrc, setDuplicateSrc] = useState(null);
   const importRef = useRef(null);
 
   useEffect(() => {
@@ -103,14 +104,6 @@ export default function Logbook() {
       const vs = await api.get("/vehicles");
       setVehicles(vs);
       setVehicleId(vs.length ? vs[0].id : null);
-    } catch (e) { flash(e.message); }
-  }
-
-  async function duplicateTrip(t) {
-    try {
-      await api.post(`/car-trips/${t.id}/duplicate`);
-      flash("Trip duplicated");
-      loadTrips();
     } catch (e) { flash(e.message); }
   }
 
@@ -274,7 +267,7 @@ export default function Logbook() {
                                 <MapPin size={14} />
                               </button>
                             )}
-                            <button className="btn btn-ghost btn-sm" title="Duplicate" onClick={() => duplicateTrip(t)}>
+                            <button className="btn btn-ghost btn-sm" title="Duplicate" onClick={() => setDuplicateSrc(t)}>
                               <Copy size={14} />
                             </button>
                             <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditTrip(t)}>
@@ -327,6 +320,18 @@ export default function Logbook() {
           defaultMonth={month}
           onClose={() => setEditTrip(null)}
           onSaved={(msg) => { setEditTrip(null); flash(msg); loadTrips(); }}
+        />
+      )}
+
+      {duplicateSrc !== null && vehicle && (
+        <TripModal
+          trip={null}
+          prefill={duplicateSrc}
+          vehicle={vehicle}
+          defaultYear={year}
+          defaultMonth={month}
+          onClose={() => setDuplicateSrc(null)}
+          onSaved={(msg) => { setDuplicateSrc(null); flash(msg); loadTrips(); }}
         />
       )}
 
@@ -433,21 +438,22 @@ function VehicleModal({ vehicle, onClose, onSaved }) {
   );
 }
 
-function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved }) {
+function TripModal({ trip, prefill, vehicle, defaultYear, defaultMonth, onClose, onSaved }) {
   const unit = fuelUnit(vehicle.fuel_type);
   const pad = (n) => String(n).padStart(2, "0");
   const defaultStart = `${defaultYear}-${pad(defaultMonth)}-01T08:00`;
+  const src = trip || prefill;
 
   const [f, setF] = useState({
-    start_dt: trip ? toInputDt(trip.start_dt) : defaultStart,
-    end_dt: trip ? toInputDt(trip.end_dt) : "",
-    purpose: trip?.purpose || "",
-    route: trip?.route || "",
-    km: trip?.km != null ? String(trip.km) : "",
-    driver_name: trip?.driver_name || "",
-    trip_type: trip?.trip_type || "Firemná",
-    events: trip?.events || "",
-    fuel_price_override: trip?.fuel_price_override != null ? String(trip.fuel_price_override) : "",
+    start_dt: src ? toInputDt(src.start_dt) : defaultStart,
+    end_dt: src ? toInputDt(src.end_dt) : "",
+    purpose: src?.purpose || "",
+    route: src?.route || "",
+    km: src?.km != null ? String(src.km) : "",
+    driver_name: src?.driver_name || "",
+    trip_type: src?.trip_type || "Firemná",
+    events: src?.events || "",
+    fuel_price_override: src?.fuel_price_override != null ? String(src.fuel_price_override) : "",
   });
   const [busy, setBusy] = useState(false);
   const [calcDist, setCalcDist] = useState(false);
@@ -502,7 +508,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
   }
 
   return (
-    <Modal title={trip ? "Edit trip" : "Add trip"} onClose={onClose}>
+    <Modal title={trip ? "Edit trip" : prefill ? "Duplicate trip" : "Add trip"} onClose={onClose}>
       <div className="stack" style={{ gap: 12 }}>
         {error && <p className="error-text">{error}</p>}
         <div className="row-2">
@@ -540,7 +546,7 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
         </div>
         <div className="field"><label>Details</label><input value={f.events} onChange={set("events")} placeholder="Fuel fill-up, toll, parking…" /></div>
         <button className="btn btn-primary" disabled={busy} onClick={save}>
-          {busy ? <Spinner /> : (trip ? "Save changes" : "Add trip")}
+          {busy ? <Spinner /> : (trip ? "Save changes" : prefill ? "Save copy" : "Add trip")}
         </button>
       </div>
     </Modal>
