@@ -331,9 +331,25 @@ def update_travel(
     t = db.get(Travel, travel_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Trip not found")
-    assert_period_open(get_period(db, t.period_id))
+    period = get_period(db, t.period_id)
+    assert_period_open(period)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(t, key, value)
+
+    # trip_date determines which month a travel belongs to — if it moved
+    # outside the current period, move the travel to the matching one.
+    if (t.trip_date.year, t.trip_date.month) != (period.year, period.month):
+        new_period = db.scalar(
+            select(Period).where(Period.year == t.trip_date.year, Period.month == t.trip_date.month)
+        )
+        if not new_period:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No period for {t.trip_date.year}/{t.trip_date.month:02d} — create it in Months first",
+            )
+        assert_period_open(new_period)
+        t.period_id = new_period.id
+
     audit.record(db, user, "update", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)

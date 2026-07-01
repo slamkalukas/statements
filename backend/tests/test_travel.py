@@ -137,6 +137,32 @@ def test_duplicate_trip(client, auth_headers):
     assert len(client.get(f"/api/periods/{pid}/travels", headers=auth_headers).json()) == 2
 
 
+def test_update_trip_date_moves_it_to_matching_period(client, auth_headers):
+    march_pid = _period(client, auth_headers, month=3)
+    april_pid = _period(client, auth_headers, month=4)
+    tid = _trip(client, auth_headers, march_pid, trip_date="2026-03-15").json()["id"]
+
+    res = client.patch(f"/api/travels/{tid}", json={"trip_date": "2026-04-10"}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    assert res.json()["period_id"] == april_pid
+
+    assert client.get(f"/api/periods/{march_pid}/travels", headers=auth_headers).json() == []
+    april_list = client.get(f"/api/periods/{april_pid}/travels", headers=auth_headers).json()
+    assert [t["id"] for t in april_list] == [tid]
+
+
+def test_update_trip_date_without_matching_period_404s_and_keeps_original(client, auth_headers):
+    march_pid = _period(client, auth_headers, month=3)
+    tid = _trip(client, auth_headers, march_pid, trip_date="2026-03-15").json()["id"]
+
+    res = client.patch(f"/api/travels/{tid}", json={"trip_date": "2026-05-01"}, headers=auth_headers)
+    assert res.status_code == 404
+    assert "Months" in res.json()["detail"]
+
+    unchanged = client.get(f"/api/periods/{march_pid}/travels", headers=auth_headers).json()
+    assert len(unchanged) == 1 and unchanged[0]["trip_date"] == "2026-03-15"
+
+
 def test_bulk_create_trips(client, auth_headers):
     pid = _period(client, auth_headers, month=5)
     body = {
