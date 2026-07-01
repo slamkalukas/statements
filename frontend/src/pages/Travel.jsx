@@ -5,6 +5,8 @@ import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../compone
 import { SK_MONTHS, formatAmount, getLastVehicleId, rememberVehicleId } from "../utils";
 
 const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "Taxi", "MHD", "Iné"];
+// Transports for which driving distance is a sane estimate — skip flights/taxi/other.
+const ROUTABLE_TRANSPORTS = new Set(["Auto služobné", "Auto súkromné", "Bus", "MHD"]);
 
 export default function Travel() {
   const [periods, setPeriods] = useState(null);
@@ -109,8 +111,6 @@ export default function Travel() {
 
       {groups.map(([name, trips]) => {
         const totalPd = trips.reduce((s, t) => s + (t.per_diem || 0), 0);
-        const totalKm = trips.reduce((s, t) => s + (t.total_km || 0), 0);
-        const hasKm = trips.some((t) => t.total_km != null);
         return (
           <div key={name} className="card card-pad" style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -118,7 +118,6 @@ export default function Travel() {
                 <Plane size={17} /> {name}
                 <span className="doc-meta">
                   · {trips.length} trip{trips.length === 1 ? "" : "s"} · {formatAmount(totalPd)} stravné
-                  {hasKm && ` · ${totalKm.toFixed(1)} km`}
                 </span>
               </h3>
               <button className="btn btn-secondary btn-sm" onClick={() => downloadTravelReport(periodId, name)}>
@@ -129,11 +128,9 @@ export default function Travel() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>Date</th>
+                    <th>Date &amp; time</th>
                     <th>Route / Legs</th>
                     <th>Purpose</th>
-                    <th>Times</th>
-                    <th className="right">km</th>
                     <th className="right">Stravné</th>
                     <th></th>
                   </tr>
@@ -141,12 +138,7 @@ export default function Travel() {
                 <tbody>
                   {trips.map((t) => (
                     <tr key={t.id}>
-                      <td className="num">
-                        {t.trip_date}
-                        {t.end_date && t.end_date !== t.trip_date && (
-                          <span className="doc-meta"> → {t.end_date}</span>
-                        )}
-                      </td>
+                      <td className="num">{fmtTripDateTime(t)}</td>
                       <td>
                         {t.legs.length === 0
                           ? <span className="doc-meta">—</span>
@@ -160,10 +152,6 @@ export default function Travel() {
                         }
                       </td>
                       <td>{t.purpose}</td>
-                      <td className="num">{fmtTimes(t)}</td>
-                      <td className="right num">
-                        {t.total_km != null ? t.total_km.toFixed(1) : "—"}
-                      </td>
                       <td className="right">
                         <span className="num">{formatAmount(t.per_diem)}</span>
                       </td>
@@ -207,12 +195,19 @@ export default function Travel() {
   );
 }
 
-function fmtTimes(t) {
-  const hm = (s) => (s ? s.slice(0, 5) : "—");
+function fmtTripDateTime(t) {
+  const hm = (s) => (s ? s.slice(0, 5) : "");
   const first = t.legs?.[0];
   const last = t.legs?.[t.legs.length - 1];
-  if (!first) return "—";
-  return `${hm(first.depart_time)}–${hm(last?.arrive_time)}`;
+  const startTime = hm(first?.depart_time);
+  const endTime = hm(last?.arrive_time);
+  const startPart = startTime ? `${t.trip_date} ${startTime}` : t.trip_date;
+
+  if (t.end_date && t.end_date !== t.trip_date) {
+    const endPart = endTime ? `${t.end_date} ${endTime}` : t.end_date;
+    return <>{startPart}<span className="doc-meta"> → {endPart}</span></>;
+  }
+  return endTime ? <>{startPart}<span className="doc-meta"> – {endTime}</span></> : startPart;
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -340,6 +335,8 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
   const [weekdays, setWeekdays] = useState([false, false, false, false, false, false, false]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [calcIdx, setCalcIdx] = useState(null);
+  const [calcErrors, setCalcErrors] = useState({});
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
 
   // Keep first leg from_place and last leg to_place in sync with Bydlisko (new trips only)
@@ -401,6 +398,45 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
   function setLeg(idx, key, val) {
     setLegs((ls) => ls.map((l, i) => (i === idx ? { ...l, [key]: val } : l)));
   }
+
+  async function calcLegDistance(idx, fromPlace, toPlace) {
+    setCalcIdx(idx);
+    setCalcErrors((e) => ({ ...e, [idx]: "" }));
+    try {
+      const res = await api.post("/route-distance", { route: `${fromPlace} > ${toPlace}` });
+      setLeg(idx, "distance_km", String(res.km));
+    } catch (e) {
+      setCalcErrors((errs) => ({ ...errs, [idx]: e.message }));
+    } finally {
+      setCalcIdx((cur) => (cur === idx ? null : cur));
+    }
+  }
+
+  // Auto-fill km once a leg has both places, a routable transport, and no km yet —
+  // covers typing, autocomplete picks, and programmatic fills (Bydlisko sync, addLeg
+  // carrying over the previous leg's place). Debounced so it settles once, not per
+  // keystroke; calcAttempted skips re-fetching the same from/to combo repeatedly.
+  const calcAttempted = useRef({});
+  useEffect(() => {
+    const timers = {};
+    legs.forEach((leg, idx) => {
+      const fromPlace = leg.from_place.trim();
+      const toPlace = leg.to_place.trim();
+      if (
+        !ROUTABLE_TRANSPORTS.has(leg.transport) || !fromPlace || !toPlace ||
+        fromPlace === toPlace || leg.distance_km !== ""
+      ) {
+        return;
+      }
+      const sig = `${leg.transport}|${fromPlace}|${toPlace}`;
+      if (calcAttempted.current[idx] === sig) return;
+      timers[idx] = setTimeout(() => {
+        calcAttempted.current[idx] = sig;
+        calcLegDistance(idx, fromPlace, toPlace);
+      }, 800);
+    });
+    return () => Object.values(timers).forEach(clearTimeout);
+  }, [legs]);
 
   function buildLegs() {
     return legs.map((l, i) => ({
@@ -595,14 +631,21 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
                   </div>
                 </div>
                 {/* Expense + per-diem + km row */}
-                <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                   <input
                     type="number" step="1" min="0"
                     style={{ flex: "0 0 80px" }}
                     placeholder="km"
+                    title="Auto-filled from From/To once both are set (for routable transports)"
                     value={leg.distance_km}
                     onChange={(e) => setLeg(idx, "distance_km", e.target.value)}
                   />
+                  {calcIdx === idx && <Spinner />}
+                  {calcIdx !== idx && calcErrors[idx] && (
+                    <span className="doc-meta" style={{ color: "var(--danger, #e53)" }} title={calcErrors[idx]}>
+                      km lookup failed
+                    </span>
+                  )}
                   <input
                     type="number" step="0.01" min="0"
                     style={{ flex: "1 1 100px" }}
