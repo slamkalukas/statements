@@ -624,7 +624,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
           <div className="field">
             <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} style={{ width: "auto" }} />
-              Repeat — create on chosen weekdays of {periodLabel(period.year, period.month)}
+              Repeat — create on chosen weekdays of {SK_MONTHS[period.month - 1]} {period.year}
             </label>
             {repeat && (
               <>
