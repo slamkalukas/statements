@@ -355,17 +355,21 @@ async def import_trips(
     imported = 0
     skipped = 0
     errors: list[str] = []
-    for i, row in enumerate(rows, 1):
-        if not row.get("start_dt"):
-            skipped += 1
-            errors.append(f"Row {i}: missing start date")
-            continue
-        jnum = _next_journey_number(db, vid, row["start_dt"].year, row["start_dt"].month)
-        t = CarTrip(vehicle_id=vid, journey_number=jnum, **row)
-        db.add(t)
-        db.flush()
-        imported += 1
-    db.commit()
+    try:
+        for i, row in enumerate(rows, 1):
+            if not row.get("start_dt"):
+                skipped += 1
+                errors.append(f"Row {i}: missing start date")
+                continue
+            jnum = _next_journey_number(db, vid, row["start_dt"].year, row["start_dt"].month)
+            t = CarTrip(vehicle_id=vid, journey_number=jnum, **row)
+            db.add(t)
+            db.flush()
+            imported += 1
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, f"Import failed on row {imported + skipped + 1}: {e}")
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
