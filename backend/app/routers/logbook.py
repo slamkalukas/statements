@@ -172,11 +172,19 @@ def ai_trip_suggest(
         date=payload.date or "not specified",
         description=payload.description,
     )
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as e:
+        detail = str(e)
+        # Surface Anthropic's human-readable message if available
+        import anthropic as _a
+        if isinstance(e, _a.APIStatusError) and e.body:
+            detail = (e.body.get("error") or {}).get("message") or detail
+        raise HTTPException(502, f"AI error: {detail}")
     text = msg.content[0].text.strip()
     # Strip accidental code fences
     if "```" in text:
