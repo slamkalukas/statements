@@ -134,8 +134,8 @@ class StorageUpdate(BaseModel):
 # ---- Travel report (cestovné) ----
 
 class TravelLegBase(BaseModel):
-    from_place: str = Field(default="", max_length=120)
-    to_place: str = Field(default="", max_length=120)
+    from_place: str = Field(default="", max_length=255)
+    to_place: str = Field(default="", max_length=255)
     transport: str = Field(default="", max_length=60)
     leg_date: date | None = None      # explicit date for this leg (None = same as trip_date)
     depart_time: time | None = None   # when you leave from_place
@@ -150,8 +150,8 @@ class TravelLegCreate(TravelLegBase):
 
 
 class TravelLegUpdate(BaseModel):
-    from_place: str | None = Field(default=None, max_length=120)
-    to_place: str | None = Field(default=None, max_length=120)
+    from_place: str | None = Field(default=None, max_length=255)
+    to_place: str | None = Field(default=None, max_length=255)
     transport: str | None = Field(default=None, max_length=60)
     leg_date: date | None = None
     depart_time: time | None = None

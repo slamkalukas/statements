@@ -128,6 +128,25 @@ def test_multiday_trip(client, auth_headers):
     assert body["per_diem"] == 28.3  # 34h -> 19.50 + 8.80
 
 
+def test_leg_place_accepts_long_full_address(client, auth_headers):
+    # Full Nominatim POI addresses (street + district + city + postcode + country)
+    # regularly exceed a tight limit — this one is 128 chars, previously capped at 120.
+    long_place = (
+        "Uniqa Tower, Ferdinandstraße, Czerninviertel, Leopoldstadt, "
+        "Katastralgemeinde Leopoldstadt, Leopoldstadt, Wien, 1020, Österreich"
+    )
+    assert len(long_place) > 120
+    pid = _period(client, auth_headers, month=2)
+    res = _trip(client, auth_headers, pid, legs=[
+        {"from_place": long_place, "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "08:00", "arrive_time": "09:00"},
+        {"from_place": "Nitra", "to_place": long_place, "transport": "Auto služobné",
+         "depart_time": "17:00", "arrive_time": "18:00"},
+    ])
+    assert res.status_code == 201, res.text
+    assert res.json()["legs"][0]["from_place"] == long_place
+
+
 def test_duplicate_trip(client, auth_headers):
     pid = _period(client, auth_headers, month=4)
     tid = _trip(client, auth_headers, pid).json()["id"]

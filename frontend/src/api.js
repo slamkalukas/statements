@@ -8,6 +8,22 @@ export function setToken(t) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+/** FastAPI validation errors return detail as a list of {loc, msg, ...} objects
+ * (or a lone object) rather than a string — render something readable instead
+ * of the object's default toString ("[object Object]"). */
+function errorMessage(detail, status) {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail
+      .map((e) => (e?.msg ? `${e.loc?.at(-1) ?? "field"}: ${e.msg}` : JSON.stringify(e)))
+      .join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.msg || JSON.stringify(detail);
+  }
+  return `Request failed (${status})`;
+}
+
 async function request(method, path, body, isForm = false) {
   const headers = {};
   const token = getToken();
@@ -30,7 +46,7 @@ async function request(method, path, body, isForm = false) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.detail || `Request failed (${res.status})`);
+    throw new Error(errorMessage(data.detail, res.status));
   }
   return data;
 }

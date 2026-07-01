@@ -166,8 +166,8 @@ class TravelLeg(Base):
         ForeignKey("travels.id", ondelete="CASCADE"), nullable=False, index=True
     )
     order_idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    from_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
-    to_place: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    from_place: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    to_place: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")
     leg_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
