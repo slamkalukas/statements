@@ -416,23 +416,26 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     }
   }
 
-  // Auto-fill km once a leg has both places, a routable transport, and no km yet —
-  // covers typing, autocomplete picks, and programmatic fills (Bydlisko sync, addLeg
-  // carrying over the previous leg's place). Debounced so it settles once, not per
-  // keystroke; calcAttempted skips re-fetching the same from/to combo repeatedly.
-  const calcAttempted = useRef({});
+  // Auto-fill km whenever a leg's from/to/transport combo changes — covers typing,
+  // autocomplete picks, and programmatic fills (Bydlisko sync, addLeg carrying over
+  // the previous leg's place). Recalculates even if a km value is already set,
+  // since that value belongs to whatever address was there before; calcAttempted is
+  // seeded from the initial legs so opening an existing trip doesn't immediately
+  // re-fetch km for addresses that haven't actually changed, and afterwards prevents
+  // re-fetching the same combo on every keystroke of an unrelated field.
+  const legSignature = (leg) => `${leg.transport}|${leg.from_place.trim()}|${leg.to_place.trim()}`;
+  const calcAttempted = useRef(
+    Object.fromEntries(legs.map((leg, idx) => [idx, legSignature(leg)]))
+  );
   useEffect(() => {
     const timers = {};
     legs.forEach((leg, idx) => {
       const fromPlace = leg.from_place.trim();
       const toPlace = leg.to_place.trim();
-      if (
-        !ROUTABLE_TRANSPORTS.has(leg.transport) || !fromPlace || !toPlace ||
-        fromPlace === toPlace || leg.distance_km !== ""
-      ) {
+      if (!ROUTABLE_TRANSPORTS.has(leg.transport) || !fromPlace || !toPlace || fromPlace === toPlace) {
         return;
       }
-      const sig = `${leg.transport}|${fromPlace}|${toPlace}`;
+      const sig = legSignature(leg);
       if (calcAttempted.current[idx] === sig) return;
       timers[idx] = setTimeout(() => {
         calcAttempted.current[idx] = sig;
