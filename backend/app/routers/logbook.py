@@ -1,10 +1,12 @@
+import json
+import os
 import re
 import unicodedata
 from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -126,6 +128,63 @@ def route_distance(payload: _RouteIn, user=Depends(get_current_user)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"km": round(km)}
+
+
+# ---- AI trip suggestion ----
+
+class _AiTripIn(BaseModel):
+    description: str = Field(max_length=500)
+    home_city: str = Field(default="", max_length=120)
+    date: str = Field(default="", max_length=10)  # YYYY-MM-DD
+
+
+_AI_PROMPT = """\
+You are a Slovak company vehicle logbook assistant. Given a short trip description, \
+return ONLY a valid JSON object — no extra text, no markdown fences — with these fields:
+- "purpose": trip purpose in Slovak (e.g. "Nákup tovaru", "Stretnutie s klientom")
+- "route": route like "CityA > CityB > CityA" for round trips; include country code if outside Slovakia
+- "km": estimated total km as an integer (round trip), or null if you cannot estimate
+- "start_time": suggested departure as "HH:MM", or null
+- "end_time": suggested return as "HH:MM", or null
+- "trip_type": "Firemná" or "Súkromná"
+
+Home city: {home_city}
+Date: {date}
+Description: {description}"""
+
+
+@router.post("/ai-trip-suggest")
+def ai_trip_suggest(
+    payload: _AiTripIn,
+    user=Depends(get_current_user),
+):
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "ANTHROPIC_API_KEY not configured on the server")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+    except ImportError:
+        raise HTTPException(503, "Anthropic SDK not installed")
+
+    prompt = _AI_PROMPT.format(
+        home_city=payload.home_city or "unknown",
+        date=payload.date or "not specified",
+        description=payload.description,
+    )
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = msg.content[0].text.strip()
+    # Strip accidental code fences
+    if "```" in text:
+        text = re.sub(r"```[a-z]*", "", text).replace("```", "").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        raise HTTPException(500, f"AI returned unparseable response: {text[:300]}")
 
 
 # ---- Place autocomplete ----

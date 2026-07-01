@@ -1,4 +1,4 @@
-import { BookOpen, Car, Copy, Download, MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { BookOpen, Car, Copy, Download, MapPin, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, downloadLogbook } from "../api";
 import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
@@ -42,6 +42,7 @@ export default function Logbook() {
   const [importing, setImporting] = useState(false);
   const [createTravelTrip, setCreateTravelTrip] = useState(null);
   const [duplicateSrc, setDuplicateSrc] = useState(null);
+  const [aiModal, setAiModal] = useState(false);
   const importRef = useRef(null);
 
   useEffect(() => {
@@ -206,6 +207,9 @@ export default function Logbook() {
               <button className="btn btn-secondary btn-sm" onClick={handleExport} disabled={exporting}>
                 {exporting ? <Spinner /> : <Download size={14} />} Export xlsx
               </button>
+              <button className="btn btn-secondary" onClick={() => setAiModal(true)}>
+                <Sparkles size={16} /> AI trip
+              </button>
               <button className="btn btn-primary" onClick={() => setEditTrip({})}>
                 <Plus size={16} /> Add trip
               </button>
@@ -332,6 +336,16 @@ export default function Logbook() {
           defaultMonth={month}
           onClose={() => setDuplicateSrc(null)}
           onSaved={(msg) => { setDuplicateSrc(null); flash(msg); loadTrips(); }}
+        />
+      )}
+
+      {aiModal && vehicle && (
+        <AiTripModal
+          defaultHomeCity={trips?.length ? (trips[trips.length - 1].route || "").split(/\s*[>→]\s*/)[0].trim() : ""}
+          defaultYear={year}
+          defaultMonth={month}
+          onClose={() => setAiModal(false)}
+          onGenerated={(prefill) => { setAiModal(false); setDuplicateSrc(prefill); }}
         />
       )}
 
@@ -547,6 +561,78 @@ function TripModal({ trip, prefill, vehicle, defaultYear, defaultMonth, onClose,
         <div className="field"><label>Details</label><input value={f.events} onChange={set("events")} placeholder="Fuel fill-up, toll, parking…" /></div>
         <button className="btn btn-primary" disabled={busy} onClick={save}>
           {busy ? <Spinner /> : (trip ? "Save changes" : prefill ? "Save copy" : "Add trip")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function AiTripModal({ defaultHomeCity, defaultYear, defaultMonth, onClose, onGenerated }) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const defaultDate = `${defaultYear}-${pad(defaultMonth)}-01`;
+  const [description, setDescription] = useState("");
+  const [homeCity, setHomeCity] = useState(defaultHomeCity);
+  const [date, setDate] = useState(defaultDate);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function generate() {
+    if (!description.trim()) { setError("Enter a trip description."); return; }
+    setBusy(true); setError("");
+    try {
+      const result = await api.post("/ai-trip-suggest", {
+        description: description.trim(),
+        home_city: homeCity.trim(),
+        date,
+      });
+      const startDt = result.start_time ? `${date}T${result.start_time}` : `${date}T08:00`;
+      const endDt = result.end_time ? `${date}T${result.end_time}` : "";
+      onGenerated({
+        start_dt: startDt,
+        end_dt: endDt || null,
+        purpose: result.purpose || "",
+        route: result.route || "",
+        km: result.km ?? null,
+        driver_name: "",
+        trip_type: result.trip_type || "Firemná",
+        events: null,
+        fuel_price_override: null,
+      });
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="AI Trip Generator" onClose={onClose}>
+      <div className="stack" style={{ gap: 12 }}>
+        {error && <p className="error-text">{error}</p>}
+        <div className="field">
+          <label>Describe the trip</label>
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && generate()}
+            placeholder="Alza Bratislava, Vienna office meeting, supplier in Žilina…"
+            autoFocus
+          />
+          <span className="doc-meta" style={{ marginTop: 4, display: "block" }}>
+            Claude will suggest purpose, route, and km based on your description.
+          </span>
+        </div>
+        <div className="row-2">
+          <div className="field">
+            <label>Home city</label>
+            <input value={homeCity} onChange={(e) => setHomeCity(e.target.value)} placeholder="Nitra, SK" />
+          </div>
+          <div className="field">
+            <label>Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+        </div>
+        <button className="btn btn-primary" onClick={generate} disabled={busy}>
+          {busy ? <Spinner /> : <><Sparkles size={15} /> Generate trip</>}
         </button>
       </div>
     </Modal>
