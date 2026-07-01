@@ -317,6 +317,37 @@ def update_trip(
     return _serialize(t, v)
 
 
+@router.post("/car-trips/{tid}/duplicate", response_model=CarTripOut, status_code=201)
+def duplicate_trip(
+    tid: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    t = db.get(CarTrip, tid)
+    if not t:
+        raise HTTPException(404, "Trip not found")
+    v = db.get(Vehicle, t.vehicle_id)
+    jnum = _next_journey_number(db, t.vehicle_id, t.start_dt.year, t.start_dt.month)
+    dup = CarTrip(
+        vehicle_id=t.vehicle_id,
+        journey_number=jnum,
+        start_dt=t.start_dt,
+        end_dt=t.end_dt,
+        purpose=t.purpose,
+        route=t.route,
+        km=t.km,
+        driver_name=t.driver_name,
+        trip_type=t.trip_type,
+        events=t.events,
+        fuel_price_override=t.fuel_price_override,
+        travel_id=None,
+    )
+    db.add(dup)
+    db.commit()
+    db.refresh(dup)
+    return _serialize(dup, v)
+
+
 @router.delete("/car-trips/{tid}", status_code=204)
 def delete_trip(
     tid: int,

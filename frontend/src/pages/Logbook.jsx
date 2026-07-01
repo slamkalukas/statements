@@ -1,4 +1,4 @@
-import { BookOpen, Car, Download, MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { BookOpen, Car, Copy, Download, MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, downloadLogbook } from "../api";
 import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
@@ -103,6 +103,14 @@ export default function Logbook() {
       const vs = await api.get("/vehicles");
       setVehicles(vs);
       setVehicleId(vs.length ? vs[0].id : null);
+    } catch (e) { flash(e.message); }
+  }
+
+  async function duplicateTrip(t) {
+    try {
+      await api.post(`/car-trips/${t.id}/duplicate`);
+      flash("Trip duplicated");
+      loadTrips();
     } catch (e) { flash(e.message); }
   }
 
@@ -266,6 +274,9 @@ export default function Logbook() {
                                 <MapPin size={14} />
                               </button>
                             )}
+                            <button className="btn btn-ghost btn-sm" title="Duplicate" onClick={() => duplicateTrip(t)}>
+                              <Copy size={14} />
+                            </button>
                             <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditTrip(t)}>
                               <Pencil size={14} />
                             </button>
