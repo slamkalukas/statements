@@ -1,16 +1,17 @@
+import re
 import unicodedata
 from datetime import datetime
 from datetime import time as dtime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import audit, routing, travel as travel_module
 from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
-from ..models import CarTrip, Travel, TravelLeg, User, Vehicle
+from ..models import CarTrip, Period, Travel, TravelLeg, User, Vehicle
 from ..schemas import (
     BulkTravelCreate, PerDiemRates, TravelCreate, TravelLegCreate,
     TravelLegOut, TravelLegUpdate, TravelOut, TravelUpdate,
@@ -173,6 +174,11 @@ def set_per_diem_rates(
 
 
 # ---- Routing key ----
+
+class TravelFromTripRequest(BaseModel):
+    traveller_name: str = Field(default="", max_length=120)
+    traveller_address: str = Field(default="", max_length=255)
+
 
 class RoutingKeyStatus(BaseModel):
     configured: bool
@@ -438,6 +444,62 @@ def recalculate_leg_route(
             status_code=422,
             detail="Could not calculate route — check from/to place names and transport type"
         )
+    db.commit()
+    db.refresh(t)
+    return serialize(t, travel_module.get_rates(db))
+
+
+# ---- Create travel from logbook trip ----
+
+@router.post("/car-trips/{tid}/create-travel", response_model=TravelOut, status_code=201)
+def create_travel_from_trip(
+    tid: int,
+    payload: TravelFromTripRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    trip = db.get(CarTrip, tid)
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.travel_id:
+        raise HTTPException(409, "Trip is already linked to a travel")
+
+    year, month = trip.start_dt.year, trip.start_dt.month
+    period = db.scalar(select(Period).where(Period.year == year, Period.month == month))
+    if not period:
+        raise HTTPException(404, f"No period for {year}/{month:02d} — create it in Months first")
+
+    parts = [p.strip() for p in re.split(r"\s*[>→]\s*|\s+-\s+", (trip.route or "").strip()) if p.strip()]
+
+    t = Travel(
+        period_id=period.id,
+        traveller_name=payload.traveller_name,
+        traveller_address=payload.traveller_address,
+        trip_date=trip.start_dt.date(),
+        end_date=trip.end_dt.date() if trip.end_dt else None,
+        purpose=trip.purpose or "",
+        vehicle_id=trip.vehicle_id,
+    )
+    db.add(t)
+    db.flush()
+
+    if len(parts) >= 2:
+        for i in range(len(parts) - 1):
+            db.add(TravelLeg(
+                travel_id=t.id, order_idx=i,
+                from_place=parts[i], to_place=parts[i + 1],
+                transport="Auto služobné", leg_date=trip.start_dt.date(),
+            ))
+    else:
+        db.add(TravelLeg(
+            travel_id=t.id, order_idx=0,
+            from_place=parts[0] if parts else "", to_place="",
+            transport="Auto služobné", leg_date=trip.start_dt.date(),
+        ))
+
+    db.flush()
+    trip.travel_id = t.id
+    audit.record(db, user, "create", "travel", t.id, f"from logbook trip {tid}")
     db.commit()
     db.refresh(t)
     return serialize(t, travel_module.get_rates(db))

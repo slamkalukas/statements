@@ -1,4 +1,4 @@
-import { BookOpen, Car, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { BookOpen, Car, Download, MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, downloadLogbook } from "../api";
 import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
@@ -40,6 +40,7 @@ export default function Logbook() {
   const [toast, setToast] = useState("");
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [createTravelTrip, setCreateTravelTrip] = useState(null);
   const importRef = useRef(null);
 
   useEffect(() => {
@@ -251,6 +252,15 @@ export default function Logbook() {
                         <td className="right num">{t.cost != null ? formatAmount(t.cost) : "—"}</td>
                         <td className="right">
                           <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                            {t.travel_id ? (
+                              <span title="Linked to travel" style={{ color: "var(--accent)", display: "flex", alignItems: "center", padding: "0 4px" }}>
+                                <MapPin size={14} />
+                              </span>
+                            ) : (
+                              <button className="btn btn-ghost btn-sm" title="Create travel" onClick={() => setCreateTravelTrip(t)}>
+                                <MapPin size={14} />
+                              </button>
+                            )}
                             <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditTrip(t)}>
                               <Pencil size={14} />
                             </button>
@@ -301,6 +311,14 @@ export default function Logbook() {
           defaultMonth={month}
           onClose={() => setEditTrip(null)}
           onSaved={(msg) => { setEditTrip(null); flash(msg); loadTrips(); }}
+        />
+      )}
+
+      {createTravelTrip && (
+        <CreateTravelModal
+          trip={createTravelTrip}
+          onClose={() => setCreateTravelTrip(null)}
+          onSaved={(msg) => { setCreateTravelTrip(null); flash(msg); loadTrips(); }}
         />
       )}
 
@@ -507,6 +525,51 @@ function TripModal({ trip, vehicle, defaultYear, defaultMonth, onClose, onSaved 
         <div className="field"><label>Details</label><input value={f.events} onChange={set("events")} placeholder="Fuel fill-up, toll, parking…" /></div>
         <button className="btn btn-primary" disabled={busy} onClick={save}>
           {busy ? <Spinner /> : (trip ? "Save changes" : "Add trip")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function CreateTravelModal({ trip, onClose, onSaved }) {
+  const [name, setName] = useState(trip.driver_name || "");
+  const [address, setAddress] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setBusy(true); setError("");
+    try {
+      await api.post(`/car-trips/${trip.id}/create-travel`, {
+        traveller_name: name,
+        traveller_address: address,
+      });
+      onSaved("Travel created and linked to this trip");
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Create travel from logbook entry" onClose={onClose}>
+      <div className="stack" style={{ gap: 12 }}>
+        {error && <p className="error-text">{error}</p>}
+        <div style={{ background: "var(--surface-2, var(--surface))", borderRadius: 6, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div className="doc-meta">Date: <strong>{fmtDt(trip.start_dt)}</strong></div>
+          {trip.purpose && <div className="doc-meta">Purpose: <strong>{trip.purpose}</strong></div>}
+          {trip.route && <div className="doc-meta">Route: <strong>{trip.route}</strong></div>}
+        </div>
+        <div className="field">
+          <label>Traveller name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name Surname" />
+        </div>
+        <div className="field">
+          <label>Traveller address</label>
+          <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, City" />
+        </div>
+        <button className="btn btn-primary" onClick={save} disabled={busy}>
+          {busy ? <Spinner /> : "Create travel"}
         </button>
       </div>
     </Modal>
