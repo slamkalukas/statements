@@ -1,5 +1,6 @@
 """Travel report: per-diem bands, CRUD, and xlsx export."""
 import io
+import zipfile
 from datetime import date, time
 from decimal import Decimal
 
@@ -213,4 +214,28 @@ def test_period_with_trips_cannot_be_deleted(client, auth_headers):
 def test_export_missing_person_404(client, auth_headers):
     pid = _period(client, auth_headers, month=12)
     res = client.get(f"/api/periods/{pid}/travels/export", params={"name": "Nobody"}, headers=auth_headers)
+    assert res.status_code == 404
+
+
+def test_export_year_bundles_every_person_and_month(client, auth_headers):
+    jan_pid = _period(client, auth_headers, year=2027, month=1)
+    feb_pid = _period(client, auth_headers, year=2027, month=2)
+    _trip(client, auth_headers, jan_pid, traveller_name="Nikoleta", trip_date="2027-01-05")
+    _trip(client, auth_headers, jan_pid, traveller_name="Peter", trip_date="2027-01-10")
+    _trip(client, auth_headers, feb_pid, traveller_name="Nikoleta", trip_date="2027-02-15")
+
+    res = client.get("/api/travels/export-year", params={"year": 2027}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    assert "application/zip" in res.headers["content-type"]
+    assert "Cestovne_2027.zip" in res.headers["content-disposition"]
+
+    names = zipfile.ZipFile(io.BytesIO(res.content)).namelist()
+    assert len(names) == 3  # Nikoleta x2 months + Peter x1 month
+    assert all(n.endswith(".xlsx") and "2027" in n for n in names)
+    assert sum("Nikoleta" in n for n in names) == 2
+    assert sum("Peter" in n for n in names) == 1
+
+
+def test_export_year_404_when_no_periods(client, auth_headers):
+    res = client.get("/api/travels/export-year", params={"year": 1999}, headers=auth_headers)
     assert res.status_code == 404

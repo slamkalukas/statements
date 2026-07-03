@@ -1,5 +1,7 @@
+import io
 import re
 import unicodedata
+import zipfile
 from datetime import datetime
 from datetime import time as dtime
 
@@ -559,4 +561,50 @@ def export_travels(
         content=data,
         media_type=_XLSX_MIME,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/travels/export-year")
+def export_travels_year(
+    year: int = Query(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """One xlsx per person per month with any trips that year, bundled into a zip —
+    reuses the same per-person export used by the single-month download button."""
+    periods = db.scalars(select(Period).where(Period.year == year).order_by(Period.month)).all()
+    if not periods:
+        raise HTTPException(status_code=404, detail=f"No months recorded for {year}")
+
+    rates = travel_module.get_rates(db)
+    buf = io.BytesIO()
+    added = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for period in periods:
+            names = db.scalars(
+                select(Travel.traveller_name)
+                .where(Travel.period_id == period.id, Travel.traveller_name != "")
+                .distinct()
+                .order_by(Travel.traveller_name)
+            ).all()
+            for name in names:
+                travels = db.scalars(
+                    select(Travel).where(Travel.period_id == period.id, Travel.traveller_name == name)
+                ).all()
+                if not travels:
+                    continue
+                address = next((t.traveller_address for t in travels if t.traveller_address), "")
+                data = travel_module.build_xlsx(name, address, period.year, period.month, travels, rates)
+                month_name = travel_module._SK_MONTHS.get(period.month, str(period.month))
+                fname = _ascii(f"{name}_Cestovne_{month_name}_{period.year}") + ".xlsx"
+                zf.writestr(fname, data)
+                added += 1
+
+    if not added:
+        raise HTTPException(status_code=404, detail=f"No trips recorded for {year}")
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="Cestovne_{year}.zip"'},
     )

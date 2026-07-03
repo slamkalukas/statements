@@ -1,6 +1,6 @@
 import { Copy, Download, Pencil, Plane, Plus, Route, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, downloadTravelReport } from "../api";
+import { api, downloadAllTravelReportsForYear, downloadTravelReport } from "../api";
 import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../components/UI";
 import { SK_MONTHS, formatAmount, getLastVehicleId, rememberVehicleId } from "../utils";
 
@@ -15,6 +15,7 @@ export default function Travel() {
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
   const [vehicles, setVehicles] = useState([]);
+  const [exportingYear, setExportingYear] = useState(false);
 
   useEffect(() => {
     api.get("/periods").then((ps) => {
@@ -63,6 +64,17 @@ export default function Travel() {
     loadTravels(periodId);
   }
 
+  async function exportYear() {
+    setExportingYear(true);
+    try {
+      await downloadAllTravelReportsForYear(period.year);
+    } catch (e) {
+      flash(e.message);
+    } finally {
+      setExportingYear(false);
+    }
+  }
+
   if (periods === null) return <Loading />;
 
   const periodIdx = periods.findIndex((p) => p.id === periodId);
@@ -83,6 +95,11 @@ export default function Travel() {
               disablePrev={periodIdx >= periods.length - 1}
               disableNext={periodIdx <= 0}
             />
+          )}
+          {period && (
+            <button className="btn btn-secondary" onClick={exportYear} disabled={exportingYear} title={`Export every person's report for ${period.year} as a zip`}>
+              {exportingYear ? <Spinner /> : <Download size={16} />} Export {period.year}
+            </button>
           )}
           {!closed && period && (
             <button className="btn btn-primary" onClick={() => setEditing({})}>

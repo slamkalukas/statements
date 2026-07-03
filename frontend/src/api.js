@@ -60,17 +60,23 @@ export const api = {
   postForm: (p, formData) => request("POST", p, formData, true),
 };
 
-async function downloadBlob(url, filename) {
+async function downloadBlob(url, fallbackFilename) {
   const token = getToken();
   const res = await fetch(url, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  // Prefer the server's Content-Disposition filename — it reflects the actual
+  // content (e.g. includes the month), while the caller's name is a fallback
+  // in case the header is ever missing.
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match?.[1] || fallbackFilename || "document";
   const blob = await res.blob();
   const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = href;
-  a.download = filename || "document";
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -93,6 +99,11 @@ export async function downloadTravelReport(periodId, name) {
     `/api/periods/${periodId}/travels/export?name=${encodeURIComponent(name)}`,
     `Cestovne_${name}.xlsx`
   );
+}
+
+/** Download a zip of every person's travel-report xlsx for every month in a year. */
+export async function downloadAllTravelReportsForYear(year) {
+  await downloadBlob(`/api/travels/export-year?year=${year}`, `Cestovne_${year}.zip`);
 }
 
 /** Download the full Kniha jázd xlsx for a vehicle (all trips). */
