@@ -156,8 +156,13 @@ class Travel(Base):
 
 
 class TravelLeg(Base):
-    """One leg of a business trip: a single from→to segment with its own transport,
-    optional routing data, reimbursable expense, and per-diem (stravné) portion."""
+    """One entry in a business trip.
+
+    kind="travel" (the default) is a from→to segment with its own transport,
+    optional routing data, reimbursable expense and per-diem (stravné) portion.
+    kind="stay" is a day spent in one place without moving — a conference,
+    training, multi-day negotiation — where from_place == to_place and there is
+    no transport or distance; `note` says what happened there."""
 
     __tablename__ = "travel_legs"
 
@@ -166,6 +171,8 @@ class TravelLeg(Base):
         ForeignKey("travels.id", ondelete="CASCADE"), nullable=False, index=True
     )
     order_idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="travel")
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     from_place: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     to_place: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")

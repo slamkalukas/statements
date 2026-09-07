@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -134,6 +134,10 @@ class StorageUpdate(BaseModel):
 # ---- Travel report (cestovné) ----
 
 class TravelLegBase(BaseModel):
+    # "travel" = a from→to segment; "stay" = a day in one place (conference,
+    # training) with no movement, described by `note`.
+    kind: Literal["travel", "stay"] = "travel"
+    note: str = Field(default="", max_length=255)
     from_place: str = Field(default="", max_length=255)
     to_place: str = Field(default="", max_length=255)
     transport: str = Field(default="", max_length=60)
@@ -150,6 +154,8 @@ class TravelLegCreate(TravelLegBase):
 
 
 class TravelLegUpdate(BaseModel):
+    kind: Literal["travel", "stay"] | None = None
+    note: str | None = Field(default=None, max_length=255)
     from_place: str | None = Field(default=None, max_length=255)
     to_place: str | None = Field(default=None, max_length=255)
     transport: str | None = Field(default=None, max_length=60)

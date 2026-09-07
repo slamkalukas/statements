@@ -29,6 +29,8 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
         id=leg.id,
         travel_id=leg.travel_id,
         order_idx=leg.order_idx,
+        kind=leg.kind,
+        note=leg.note,
         from_place=leg.from_place,
         to_place=leg.to_place,
         transport=leg.transport,
@@ -87,7 +89,10 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
     company car transport the function is a no-op (deleting the logbook entry
     on transport change is intentionally avoided to prevent data loss).
     """
-    car_legs = [l for l in travel.legs if travel_module.is_company_car_transport(l.transport)]
+    car_legs = [
+        l for l in travel.legs
+        if l.kind != "stay" and travel_module.is_company_car_transport(l.transport)
+    ]
     if not car_legs:
         return
 

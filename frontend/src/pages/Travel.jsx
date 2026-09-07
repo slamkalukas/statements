@@ -160,7 +160,14 @@ export default function Travel() {
                         {t.legs.length === 0
                           ? <span className="doc-meta">—</span>
                           : (() => {
-                              const dests = t.legs.slice(0, -1).map((l) => l.to_place).filter(Boolean);
+                              // Destinations only (drop the trip home), collapsing the
+                              // repeats a stay in an already-visited city produces.
+                              const dests = [];
+                              t.legs.slice(0, -1).forEach((l) => {
+                                if (l.to_place && l.to_place !== dests[dests.length - 1]) {
+                                  dests.push(l.to_place);
+                                }
+                              });
                               const label = dests.length
                                 ? dests.join(" → ")
                                 : (t.legs[t.legs.length - 1].to_place || "—");
@@ -308,10 +315,109 @@ function PlaceInput({ value, onChange, readOnly, placeholder, title, style }) {
   );
 }
 
+/** A day spent in one place: no route, no transport, no km — just where you
+ *  were and what you were doing (conference, training, negotiations). */
+function StayCard({ leg, idx, trip, tripDate, endDate, onChange, onRemove }) {
+  const multiDay = endDate && endDate !== tripDate;
+  return (
+    <div
+      className="card"
+      style={{
+        padding: "10px 12px",
+        background: "var(--surface-2, #f8f8f8)",
+        borderLeft: "3px solid var(--accent, #2a9d6e)",
+      }}
+    >
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+        <span className="doc-meta" style={{ minWidth: 18, fontSize: 11 }}>#{idx + 1}</span>
+        <span className="doc-meta" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Pobyt</span>
+        <PlaceInput
+          value={leg.from_place}
+          placeholder="Place stayed in"
+          onChange={(val) => onChange("from_place", val)}
+        />
+        <input
+          type="date"
+          style={{ width: 140 }}
+          title="Date of this stay"
+          min={tripDate || undefined}
+          max={endDate || undefined}
+          value={leg.leg_date}
+          onChange={(e) => onChange("leg_date", e.target.value)}
+        />
+        <button type="button" className="btn btn-ghost btn-sm" title="Remove" onClick={onRemove}>
+          <Trash2 size={13} />
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          style={{ flex: "1 1 220px" }}
+          placeholder="What happened here (konferencia, školenie…)"
+          value={leg.note}
+          onChange={(e) => onChange("note", e.target.value)}
+        />
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 0 auto" }}>
+          <input
+            type="time" style={{ width: 100 }}
+            title="From (optional)"
+            value={leg.depart_time}
+            onChange={(e) => onChange("depart_time", e.target.value)}
+          />
+          <span className="doc-meta">–</span>
+          <input
+            type="time" style={{ width: 100 }}
+            title="To (optional)"
+            value={leg.arrive_time}
+            onChange={(e) => onChange("arrive_time", e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+        <input
+          type="number" step="0.01" min="0"
+          style={{ flex: "1 1 100px" }}
+          placeholder="Výdavky € (konferenčný poplatok, hotel…)"
+          value={leg.expense}
+          onChange={(e) => onChange("expense", e.target.value)}
+        />
+        <input
+          type="number" step="0.01" min="0"
+          style={{ flex: "1 1 100px" }}
+          placeholder="Stravné € (blank = auto)"
+          value={leg.per_diem}
+          onChange={(e) => onChange("per_diem", e.target.value)}
+        />
+      </div>
+      {!multiDay && !trip && (
+        <p className="doc-meta" style={{ marginTop: 4 }}>
+          Set an end date on the trip to pick which day this stay falls on.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
   return {
+    kind: "travel", note: "",
     from_place: fromPlace, to_place: toPlace,
     transport: "Auto služobné",
+    leg_date: "",
+    depart_time: "", arrive_time: "",
+    distance_km: "",
+    expense: "", per_diem: "",
+    order_idx,
+  };
+}
+
+/** A day spent in one place — conference, training, negotiations — with no travel. */
+function emptyStay(order_idx, place = "") {
+  return {
+    kind: "stay", note: "",
+    from_place: place, to_place: place,
+    transport: "",
     leg_date: "",
     depart_time: "", arrive_time: "",
     distance_km: "",
@@ -334,6 +440,8 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
   const initLegs = () => {
     if (trip?.legs?.length) {
       return trip.legs.map((l) => ({
+        kind: l.kind || "travel",
+        note: l.note || "",
         from_place: l.from_place,
         to_place: l.to_place,
         transport: l.transport,
@@ -367,8 +475,10 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     setLegs((ls) => {
       if (!ls.length) return ls;
       const updated = ls.map((l) => ({ ...l }));
-      updated[0] = { ...updated[0], from_place: addr };
-      updated[updated.length - 1] = { ...updated[updated.length - 1], to_place: addr };
+      const last = updated.length - 1;
+      // Stays have no direction — never rewrite their place from Bydlisko.
+      if (updated[0].kind !== "stay") updated[0] = { ...updated[0], from_place: addr };
+      if (updated[last].kind !== "stay") updated[last] = { ...updated[last], to_place: addr };
       return updated;
     });
   }, [f.traveller_address, trip]);
@@ -405,13 +515,27 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     });
   }
 
+  /** A day in one place, inserted before the return leg — same slot as a stop. */
+  function addStay() {
+    setLegs((ls) => {
+      const place = ls[ls.length - 2]?.to_place || ls[0]?.to_place || "";
+      const updated = [...ls.slice(0, -1), emptyStay(0, place), ls[ls.length - 1]];
+      return updated.map((l, i) => ({ ...l, order_idx: i }));
+    });
+  }
+
   function removeLeg(idx) {
     setLegs((ls) => {
-      if (ls.length <= 2) return ls; // minimum 2 legs
+      if (ls.filter((l) => l.kind !== "stay").length <= 2 && ls[idx].kind !== "stay") return ls;
       const updated = ls.filter((_, i) => i !== idx).map((l, i) => ({ ...l, order_idx: i }));
-      // Re-enforce Bydlisko on first/last
-      updated[0] = { ...updated[0], from_place: f.traveller_address };
-      updated[updated.length - 1] = { ...updated[updated.length - 1], to_place: f.traveller_address };
+      // Re-enforce Bydlisko on first/last — but a stay has no direction to enforce.
+      const last = updated.length - 1;
+      if (updated[0]?.kind !== "stay") {
+        updated[0] = { ...updated[0], from_place: f.traveller_address };
+      }
+      if (updated[last]?.kind !== "stay") {
+        updated[last] = { ...updated[last], to_place: f.traveller_address };
+      }
       return updated;
     });
   }
@@ -449,7 +573,10 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     legs.forEach((leg, idx) => {
       const fromPlace = leg.from_place.trim();
       const toPlace = leg.to_place.trim();
-      if (!ROUTABLE_TRANSPORTS.has(leg.transport) || !fromPlace || !toPlace || fromPlace === toPlace) {
+      if (
+        leg.kind === "stay" || !ROUTABLE_TRANSPORTS.has(leg.transport) ||
+        !fromPlace || !toPlace || fromPlace === toPlace
+      ) {
         return;
       }
       const sig = legSignature(leg);
@@ -464,9 +591,12 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
 
   function buildLegs() {
     return legs.map((l, i) => ({
+      kind: l.kind || "travel",
+      note: (l.note || "").trim(),
       from_place: l.from_place.trim(),
-      to_place: l.to_place.trim(),
-      transport: l.transport,
+      // A stay has no direction — both ends are the place you stayed in.
+      to_place: (l.kind === "stay" ? l.from_place : l.to_place).trim(),
+      transport: l.kind === "stay" ? "" : l.transport,
       leg_date: l.leg_date || null,
       depart_time: l.depart_time || null,
       arrive_time: l.arrive_time || null,
@@ -588,12 +718,28 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
             <label style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
               <Route size={14} /> Legs
             </label>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={addLeg}>
-              <Plus size={13} /> Add stop
-            </button>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addStay} title="A day in one place — conference, training — with no travel">
+                <Plus size={13} /> Add stay
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addLeg}>
+                <Plus size={13} /> Add stop
+              </button>
+            </div>
           </div>
           <div className="stack" style={{ gap: 8 }}>
-            {legs.map((leg, idx) => (
+            {legs.map((leg, idx) => leg.kind === "stay" ? (
+              <StayCard
+                key={idx}
+                leg={leg}
+                idx={idx}
+                trip={trip}
+                tripDate={f.trip_date}
+                endDate={f.end_date}
+                onChange={(key, val) => setLeg(idx, key, val)}
+                onRemove={() => removeLeg(idx)}
+              />
+            ) : (
               <div key={idx} className="card" style={{ padding: "10px 12px", background: "var(--surface-2, #f8f8f8)" }}>
                 {/* Route row */}
                 <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>

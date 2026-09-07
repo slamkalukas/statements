@@ -131,6 +131,24 @@ def _meeting_places(t: Travel) -> str:
     return ", ".join(seen)
 
 
+def _write_leg_money(sheet, row: int, leg, trip_pd: float | None, is_last_leg: bool) -> None:
+    """Stravné / výdavky / row total for one leg row. Per-leg stravné wins; the
+    duration-derived trip total lands on the trip's last row when no leg sets one."""
+    pd_value = None
+    if leg.per_diem is not None:
+        pd_value = float(leg.per_diem)
+    elif is_last_leg and trip_pd is not None:
+        pd_value = trip_pd
+    if pd_value is not None:
+        sheet.cell(row, 6).value = pd_value
+        sheet.cell(row, 6).number_format = "0.00"
+    if leg.expense is not None:
+        sheet.cell(row, 7).value = float(leg.expense)
+        sheet.cell(row, 7).number_format = "0.00"
+    sheet.cell(row, 8).value = f"=SUM(F{row}:G{row})"
+    sheet.cell(row, 8).number_format = "0.00"
+
+
 def build_xlsx(name: str, address: str, year: int, month: int,
                travels: list[Travel], rates: dict) -> bytes:
     """Render the two-sheet travel report for one person and month."""
@@ -210,6 +228,24 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             leg_date = _fmt_date(effective_date)
             arrive_date = leg_date
 
+            if leg.kind == "stay":
+                # A day spent in one place — a single row, no Odchod/Príchod pair.
+                place = leg.to_place or leg.from_place
+                label = f"Pobyt {place}".strip() if place else "Pobyt"
+                if leg.note:
+                    label = f"{label} — {leg.note}"
+                s2.cell(r, 2).value = leg_date
+                s2.cell(r, 3).value = label
+                if leg.depart_time or leg.arrive_time:
+                    s2.cell(r, 4).value = (
+                        f"{_fmt_time(leg.depart_time)}–{_fmt_time(leg.arrive_time)}".strip("–")
+                    )
+                _write_leg_money(s2, r, leg, trip_pd, is_last_leg)
+                for col in range(2, 9):
+                    s2.cell(r, col).border = box
+                r += 1
+                continue
+
             # Row 1: Odchod from_place at depart_time
             s2.cell(r, 2).value = leg_date
             s2.cell(r, 3).value = f"Odchod {leg.from_place}".strip()
@@ -221,22 +257,10 @@ def build_xlsx(name: str, address: str, year: int, month: int,
 
             # Row 2: Príchod to_place at arrive_time — expense/per_diem go here
             s2.cell(r, 2).value = arrive_date
-            s2.cell(r, 3).value = f"Príchod {leg.to_place}".strip()
+            arrival = f"Príchod {leg.to_place}".strip()
+            s2.cell(r, 3).value = f"{arrival} — {leg.note}" if leg.note else arrival
             s2.cell(r, 4).value = _fmt_time(leg.arrive_time)
-            # Per-diem: per-leg if set; otherwise show trip total on last Príchod row only
-            pd_value = None
-            if leg.per_diem is not None:
-                pd_value = float(leg.per_diem)
-            elif is_last_leg and trip_pd is not None:
-                pd_value = trip_pd
-            if pd_value is not None:
-                s2.cell(r, 6).value = pd_value
-                s2.cell(r, 6).number_format = "0.00"
-            if leg.expense is not None:
-                s2.cell(r, 7).value = float(leg.expense)
-                s2.cell(r, 7).number_format = "0.00"
-            s2.cell(r, 8).value = f"=SUM(F{r}:G{r})"
-            s2.cell(r, 8).number_format = "0.00"
+            _write_leg_money(s2, r, leg, trip_pd, is_last_leg)
             for col in range(2, 9):
                 s2.cell(r, col).border = box
             r += 1

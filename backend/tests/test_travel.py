@@ -148,6 +148,65 @@ def test_leg_place_accepts_long_full_address(client, auth_headers):
     assert res.json()["legs"][0]["from_place"] == long_place
 
 
+def _stay_trip(client, auth_headers, pid):
+    """Multi-day trip: drive out, spend a day at a conference, drive back."""
+    return _trip(client, auth_headers, pid, trip_date="2026-07-01", end_date="2026-07-03", legs=[
+        {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+         "depart_time": "08:00", "arrive_time": "11:00"},
+        {"kind": "stay", "from_place": "Wien", "to_place": "Wien",
+         "note": "Konferencia IT", "leg_date": "2026-07-02", "expense": 120.0},
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "16:00", "arrive_time": "19:00"},
+    ])
+
+
+def test_stay_leg_round_trips(client, auth_headers):
+    pid = _period(client, auth_headers)
+    res = _stay_trip(client, auth_headers, pid)
+    assert res.status_code == 201, res.text
+
+    legs = res.json()["legs"]
+    assert [l["kind"] for l in legs] == ["travel", "stay", "travel"]
+    stay = legs[1]
+    assert stay["note"] == "Konferencia IT"
+    assert stay["leg_date"] == "2026-07-02"
+    assert stay["expense"] == 120.0
+    assert stay["transport"] == ""
+    assert stay["distance_km"] is None  # a stay is never routed
+
+
+def test_stay_leg_is_one_row_in_the_vpc_sheet(client, auth_headers):
+    pid = _period(client, auth_headers)
+    _stay_trip(client, auth_headers, pid)
+
+    res = client.get(f"/api/periods/{pid}/travels/export", params={"name": "Nikoleta"}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
+    labels = [c.value for row in vpc.iter_rows() for c in row
+              if c.column == 3 and isinstance(c.value, str)]
+
+    stay_rows = [l for l in labels if l.startswith("Pobyt")]
+    assert stay_rows == ["Pobyt Wien — Konferencia IT"]  # exactly one row, not a pair
+    # The travel legs still render as Odchod/Príchod pairs around it.
+    assert sum(l.startswith("Odchod") for l in labels) == 2
+    assert sum(l.startswith("Príchod") for l in labels) == 2
+
+
+def test_stay_leg_does_not_reach_the_logbook(client, auth_headers):
+    vres = client.post("/api/vehicles", json={"ecv": "NR123XY"}, headers=auth_headers)
+    vid = vres.json()["id"]
+    pid = _period(client, auth_headers)
+    _stay_trip(client, auth_headers, pid)
+
+    trips = client.get(
+        f"/api/vehicles/{vid}/trips", params={"year": 2026, "month": 7}, headers=auth_headers
+    ).json()
+    # One car trip from the two driving legs — the stay contributes no route/km.
+    assert len(trips) == 1
+    assert "Wien" in trips[0]["route"]
+    assert trips[0]["route"].count("Wien") == 1
+
+
 def test_duplicate_trip(client, auth_headers):
     pid = _period(client, auth_headers, month=4)
     tid = _trip(client, auth_headers, pid).json()["id"]

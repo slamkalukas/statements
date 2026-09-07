@@ -86,7 +86,9 @@ _ROUTABLE_TRANSPORTS = {
 
 def auto_route(db, leg) -> bool:
     """Fill distance_km and duration_min on a TravelLeg.
-    Skips flights and other non-routable transports. Returns True if updated."""
+    Skips stays, flights and other non-routable transports. Returns True if updated."""
+    if getattr(leg, "kind", "travel") == "stay":
+        return False
     if leg.transport and leg.transport not in _ROUTABLE_TRANSPORTS:
         return False
     if not leg.from_place or not leg.to_place:
