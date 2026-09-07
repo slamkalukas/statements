@@ -23,6 +23,36 @@ def test_per_diem_bands():
     assert tv.computed_per_diem(D, date(2026, 7, 2), time(8, 0), time(18, 0), R) == Decimal("28.30")
 
 
+def test_foreign_day_fraction_bands():
+    # Share of the daily rate by hours abroad in a calendar day.
+    assert tv._foreign_fraction(5) == Decimal("0.25")
+    assert tv._foreign_fraction(6) == Decimal("0.25")   # boundary is inclusive
+    assert tv._foreign_fraction(7) == Decimal("0.50")
+    assert tv._foreign_fraction(12) == Decimal("0.50")  # boundary is inclusive
+    assert tv._foreign_fraction(13) == Decimal("1")
+
+
+def test_rate_book_resolves_by_date():
+    book = tv.RateBook(
+        domestic_history=[
+            {"valid_from": date(2026, 1, 1), "band1": 8.80, "band2": 13.10, "band3": 19.50},
+            {"valid_from": date(2026, 7, 1), "band1": 9.30, "band2": 14.00, "band3": 20.80},
+        ],
+        foreign_rates=[
+            {"code": "IT", "name": "Taliansko", "rate": 45.0, "valid_from": tv.BEGINNING},
+            {"code": "IT", "name": "Taliansko", "rate": 47.0, "valid_from": date(2026, 7, 1)},
+        ],
+    )
+    # A trip keeps the rate that was in force on its own date.
+    assert book.domestic(date(2026, 6, 30))["band1"] == 8.80
+    assert book.domestic(date(2026, 7, 1))["band1"] == 9.30
+    assert book.foreign("IT", date(2026, 6, 30)) == 45.0
+    assert book.foreign("IT", date(2026, 7, 1)) == 47.0
+    # Before any row, and for countries that were never configured.
+    assert book.foreign("IT", date(2020, 1, 1)) == 45.0   # open-ended first row
+    assert book.foreign("XX", date(2026, 7, 1)) == 0.0
+
+
 def _period(client, auth_headers, year=2026, month=7):
     return client.post("/api/periods", json={"year": year, "month": month}, headers=auth_headers).json()["id"]
 
@@ -77,12 +107,31 @@ def test_delete_trip(client, auth_headers):
 
 def test_per_diem_rates_get_set(client, auth_headers):
     got = client.get("/api/travel/per-diem-rates", headers=auth_headers).json()
-    assert got == {"band1": 8.8, "band2": 13.1, "band3": 19.5}
-    client.patch("/api/travel/per-diem-rates", json={"band1": 9.0, "band2": 14.0, "band3": 21.0}, headers=auth_headers)
+    assert got["rates"] == [{"valid_from": None, "band1": 8.8, "band2": 13.1, "band3": 19.5}]
+    assert got["domestic_topup"] is False
+
+    client.patch("/api/travel/per-diem-rates", headers=auth_headers, json={
+        "rates": [{"valid_from": None, "band1": 9.0, "band2": 14.0, "band3": 21.0}],
+    })
     # New rate flows into computed per-diem.
     pid = _period(client, auth_headers, month=10)
     body = _trip(client, auth_headers, pid).json()
     assert body["per_diem"] == 9.0
+
+
+def test_domestic_rates_are_effective_dated(client, auth_headers):
+    client.patch("/api/travel/per-diem-rates", headers=auth_headers, json={"rates": [
+        {"valid_from": None, "band1": 8.8, "band2": 13.1, "band3": 19.5},
+        {"valid_from": "2026-08-01", "band1": 9.3, "band2": 14.0, "band3": 20.8},
+    ]})
+    before = _period(client, auth_headers, year=2026, month=7)
+    after = _period(client, auth_headers, year=2026, month=8)
+
+    old_trip = _trip(client, auth_headers, before, trip_date="2026-07-01").json()
+    new_trip = _trip(client, auth_headers, after, trip_date="2026-08-05").json()
+    # Re-rating from August must not rewrite what July's trip reports.
+    assert old_trip["per_diem"] == 8.8
+    assert new_trip["per_diem"] == 9.3
 
 
 def test_export_xlsx(client, auth_headers):
@@ -207,6 +256,193 @@ def test_stay_leg_does_not_reach_the_logbook(client, auth_headers):
     assert trips[0]["route"].count("Wien") == 1
 
 
+def test_foreign_rates_settings_round_trip(client, auth_headers):
+    assert client.get("/api/travel/foreign-per-diem-rates", headers=auth_headers).json()["rates"] == []
+
+    res = _set_foreign(client, auth_headers, [
+        {"code": "it", "name": "Taliansko", "rate": 45},
+        {"code": "AT", "name": "Rakúsko", "rate": 45.5},
+        {"code": "IT", "name": "Taliansko", "rate": 47, "valid_from": "2026-10-01"},
+        {"code": "IT", "name": "same date ignored", "rate": 99},
+    ])
+    assert res.status_code == 200, res.text
+    saved = res.json()["rates"]
+    # Codes upper-cased; one row per (code, valid_from) so a country keeps a
+    # rate history, and rows with the same date collapse to the first.
+    assert [(r["code"], r["rate"], r["valid_from"]) for r in saved] == [
+        ("AT", 45.5, None),
+        ("IT", 45.0, None),
+        ("IT", 47.0, "2026-10-01"),
+    ]
+    assert client.get("/api/travel/foreign-per-diem-rates", headers=auth_headers).json()["rates"] == saved
+
+
+def _rome_trip(client, auth_headers, pid, **over):
+    """Fly out 1.9. landing 10:00, conference on the 2nd, fly back 3.9. 21:00."""
+    body = dict(trip_date="2026-09-01", end_date="2026-09-03", legs=[
+        {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+         "country": "IT", "depart_time": "08:00", "arrive_time": "10:00"},
+        {"kind": "stay", "from_place": "Roma", "to_place": "Roma",
+         "note": "konferencia", "leg_date": "2026-09-02"},
+        {"from_place": "Roma", "to_place": "Nitra", "transport": "Lietadlo",
+         "depart_time": "21:00", "arrive_time": "23:00"},
+    ])
+    body.update(over)
+    return _trip(client, auth_headers, pid, **body)
+
+
+def _set_foreign(client, auth_headers, rates):
+    return client.patch("/api/travel/foreign-per-diem-rates",
+                        headers=auth_headers, json={"rates": rates})
+
+
+def test_foreign_trip_uses_country_rate_not_domestic_bands(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+
+    trip = _rome_trip(client, auth_headers, pid).json()
+    assert trip["legs"][0]["country"] == "IT"
+    # 3 calendar days abroad, each over 12 h -> 3 x 45. The domestic bands would
+    # have given 52.10 for the same 63-hour span.
+    assert trip["per_diem"] == 135.0
+    assert trip["per_diem_computed"] == 135.0
+
+
+def test_domestic_trip_unaffected_by_foreign_rates(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    pid = _period(client, auth_headers)
+    trip = _trip(client, auth_headers, pid).json()  # no leg has a country
+    assert all(l["country"] == "" for l in trip["legs"])
+    assert trip["per_diem"] == 8.8
+
+
+def test_foreign_trip_without_configured_rate_earns_nothing(client, auth_headers):
+    pid = _period(client, auth_headers, year=2026, month=9)
+    trip = _rome_trip(client, auth_headers, pid, legs=[
+        {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+         "country": "XX", "depart_time": "08:00", "arrive_time": "10:00"},
+        {"from_place": "Roma", "to_place": "Nitra", "transport": "Lietadlo",
+         "depart_time": "21:00", "arrive_time": "23:00"},
+    ]).json()
+    # Better a visible zero than silently billing domestic rates for a foreign trip.
+    assert trip["per_diem"] == 0.0
+
+
+def test_marking_a_leg_foreign_recalculates(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    trip = _rome_trip(client, auth_headers, pid, legs=[
+        {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+         "depart_time": "08:00", "arrive_time": "10:00"},
+        {"kind": "stay", "from_place": "Roma", "to_place": "Roma",
+         "note": "konferencia", "leg_date": "2026-09-02"},
+        {"from_place": "Roma", "to_place": "Nitra", "transport": "Lietadlo",
+         "depart_time": "21:00", "arrive_time": "23:00"},
+    ]).json()
+    assert trip["per_diem"] == 52.1  # domestic bands while no leg has a country
+
+    res = client.patch(f"/api/travel-legs/{trip['legs'][0]['id']}",
+                       json={"country": "IT"}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    assert res.json()["per_diem"] == 135.0
+
+
+def test_foreign_rates_are_effective_dated(client, auth_headers):
+    _set_foreign(client, auth_headers, [
+        {"code": "IT", "name": "Taliansko", "rate": 45, "valid_from": None},
+        {"code": "IT", "name": "Taliansko", "rate": 47, "valid_from": "2026-10-01"},
+    ])
+    sep = _period(client, auth_headers, year=2026, month=9)
+    octo = _period(client, auth_headers, year=2026, month=10)
+
+    september = _rome_trip(client, auth_headers, sep).json()
+    october = _rome_trip(client, auth_headers, octo,
+                         trip_date="2026-10-01", end_date="2026-10-03",
+                         legs=[
+                             {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+                              "country": "IT", "depart_time": "08:00", "arrive_time": "10:00"},
+                             {"from_place": "Roma", "to_place": "Nitra", "transport": "Lietadlo",
+                              "depart_time": "21:00", "arrive_time": "23:00"},
+                         ]).json()
+    # Raising Italy from October leaves September's trip reporting the old rate.
+    assert september["per_diem"] == 135.0
+    assert october["per_diem"] == 141.0  # 3 x 47
+
+
+def test_trip_spanning_two_countries_rates_each_day_separately(client, auth_headers):
+    _set_foreign(client, auth_headers, [
+        {"code": "IT", "name": "Taliansko", "rate": 45},
+        {"code": "AT", "name": "Rakúsko", "rate": 60},
+    ])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    # Rome on the 1st-2nd, drive to Vienna midday on the 2nd, home on the 3rd.
+    trip = _trip(client, auth_headers, pid,
+                 trip_date="2026-09-01", end_date="2026-09-03", legs=[
+        {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+         "country": "IT", "depart_time": "08:00", "arrive_time": "10:00"},
+        {"from_place": "Roma", "to_place": "Wien", "transport": "Lietadlo",
+         "country": "AT", "leg_date": "2026-09-02",
+         "depart_time": "14:00", "arrive_time": "16:00"},
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "18:00", "arrive_time": "20:00"},
+    ]).json()
+    # 1.9: 14 h in IT -> 45. 2.9: 16 h IT + 8 h AT -> 24 h abroad at IT's rate
+    # (most hours) -> 45. 3.9: 20 h in AT -> 60. Total 150.
+    assert trip["per_diem"] == 150.0
+
+
+def test_domestic_topup_pays_the_slovak_part_of_a_foreign_day(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    # Leave at 04:00, land in Rome at 12:00 -> 8 h in Slovakia that day.
+    legs = [
+        {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+         "country": "IT", "depart_time": "04:00", "arrive_time": "12:00"},
+        {"from_place": "Roma", "to_place": "Nitra", "transport": "Lietadlo",
+         "depart_time": "21:00", "arrive_time": "23:00"},
+    ]
+    off = _trip(client, auth_headers, pid, trip_date="2026-09-01",
+                end_date="2026-09-02", legs=legs).json()
+    # 1.9: 12 h abroad -> 50 % of 45 = 22.50. 2.9: 23 h -> 45. Slovak part ignored.
+    assert off["per_diem"] == 67.5
+
+    client.patch("/api/travel/per-diem-rates", headers=auth_headers, json={
+        "rates": [{"valid_from": None, "band1": 8.8, "band2": 13.1, "band3": 19.5}],
+        "domestic_topup": True,
+    })
+    on = _trip(client, auth_headers, pid, trip_date="2026-09-01",
+               end_date="2026-09-02", legs=legs).json()
+    # Same days, plus 8 h in Slovakia on the 1st -> band1 8.80.
+    assert on["per_diem"] == 76.3
+
+
+def test_domestic_topup_needs_five_hours_of_its_own(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    client.patch("/api/travel/per-diem-rates", headers=auth_headers, json={
+        "rates": [{"valid_from": None, "band1": 8.8, "band2": 13.1, "band3": 19.5}],
+        "domestic_topup": True,
+    })
+    pid = _period(client, auth_headers, year=2026, month=9)
+    # Rome trip has only 2 h in Slovakia each end — under the 5 h threshold, so
+    # the top-up adds nothing and the total is unchanged.
+    assert _rome_trip(client, auth_headers, pid).json()["per_diem"] == 135.0
+
+
+def test_foreign_per_diem_reaches_the_xlsx(client, auth_headers):
+    client.patch("/api/travel/foreign-per-diem-rates", headers=auth_headers,
+                 json={"rates": [{"code": "IT", "name": "Taliansko", "rate": 45}]})
+    pid = _period(client, auth_headers, year=2026, month=9)
+    _rome_trip(client, auth_headers, pid)
+
+    res = client.get(f"/api/periods/{pid}/travels/export",
+                     params={"name": "Nikoleta"}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
+    amounts = [c.value for row in vpc.iter_rows() for c in row
+               if c.column == 6 and isinstance(c.value, (int, float))]
+    assert amounts == [135.0]
+
+
 def test_duplicate_trip(client, auth_headers):
     pid = _period(client, auth_headers, month=4)
     tid = _trip(client, auth_headers, pid).json()["id"]
@@ -214,6 +450,23 @@ def test_duplicate_trip(client, auth_headers):
     assert dup.status_code == 201, dup.text
     assert dup.json()["id"] != tid
     assert len(client.get(f"/api/periods/{pid}/travels", headers=auth_headers).json()) == 2
+
+
+def test_duplicate_keeps_country_and_stay_legs(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    tid = _rome_trip(client, auth_headers, pid).json()["id"]
+
+    dup = client.post(f"/api/travels/{tid}/duplicate", headers=auth_headers)
+    assert dup.status_code == 201, dup.text
+    body = dup.json()
+    # A duplicate that quietly became a domestic trip, or whose stay turned into a
+    # travel leg, would be worth real money on the report.
+    assert body["legs"][0]["country"] == "IT"
+    assert body["per_diem"] == 135.0
+    assert [l["kind"] for l in body["legs"]] == ["travel", "stay", "travel"]
+    assert body["legs"][1]["note"] == "konferencia"
+    assert body["legs"][1]["leg_date"] == "2026-09-02"
 
 
 def test_update_trip_date_moves_it_to_matching_period(client, auth_headers):

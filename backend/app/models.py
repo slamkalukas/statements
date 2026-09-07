@@ -173,6 +173,10 @@ class TravelLeg(Base):
     order_idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     kind: Mapped[str] = mapped_column(String(20), nullable=False, default="travel")
     note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Country this leg arrives in; empty = home. A trip is foreign once any leg
+    # has one, and the traveller counts as being there until the next arrival —
+    # which is what lets one trip span several countries.
+    country: Mapped[str] = mapped_column(String(8), nullable=False, default="")
     from_place: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     to_place: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     transport: Mapped[str] = mapped_column(String(60), nullable=False, default="")

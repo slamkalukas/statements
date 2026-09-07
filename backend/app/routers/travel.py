@@ -15,8 +15,9 @@ from ..database import get_db
 from ..deps import assert_period_open, get_current_user, get_period
 from ..models import CarTrip, Period, Travel, TravelLeg, User, Vehicle
 from ..schemas import (
-    BulkTravelCreate, PerDiemRates, TravelCreate, TravelLegCreate,
-    TravelLegOut, TravelLegUpdate, TravelOut, TravelUpdate,
+    BulkTravelCreate, ForeignPerDiemRates, PerDiemRateHistory, PerDiemRateRow,
+    TravelCreate, TravelLegCreate, TravelLegOut, TravelLegUpdate, TravelOut,
+    TravelUpdate,
 )
 
 router = APIRouter(prefix="/api", tags=["travel"])
@@ -31,6 +32,7 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
         order_idx=leg.order_idx,
         kind=leg.kind,
         note=leg.note,
+        country=leg.country,
         from_place=leg.from_place,
         to_place=leg.to_place,
         transport=leg.transport,
@@ -44,12 +46,9 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
     )
 
 
-def serialize(t: Travel, rates: dict) -> TravelOut:
-    pd = travel_module.effective_per_diem(t, rates)
-    first_depart, last_arrive = travel_module._leg_times(t)
-    comp = travel_module.computed_per_diem(
-        t.trip_date, t.end_date, first_depart, last_arrive, rates
-    )
+def serialize(t: Travel, book: travel_module.RateBook) -> TravelOut:
+    pd = travel_module.effective_per_diem(t, book)
+    comp = travel_module.computed_trip_per_diem(t, book)
     km_list = [float(leg.distance_km) for leg in t.legs if leg.distance_km is not None]
     first_depart, last_arrive = travel_module._leg_times(t)
     return TravelOut(
@@ -161,21 +160,60 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
 
 # ---- Per-diem rates ----
 
-@router.get("/travel/per-diem-rates", response_model=PerDiemRates)
+def _history_out(db: Session) -> PerDiemRateHistory:
+    return PerDiemRateHistory(
+        rates=[
+            PerDiemRateRow(
+                valid_from=None if r["valid_from"] == travel_module.BEGINNING else r["valid_from"],
+                **{k: r[k] for k in travel_module.DEFAULT_RATES},
+            )
+            for r in travel_module.get_rate_history(db)
+        ],
+        domestic_topup=travel_module.get_domestic_topup(db),
+    )
+
+
+@router.get("/travel/per-diem-rates", response_model=PerDiemRateHistory)
 def get_per_diem_rates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return PerDiemRates(**travel_module.get_rates(db))
+    return _history_out(db)
 
 
-@router.patch("/travel/per-diem-rates", response_model=PerDiemRates)
+@router.patch("/travel/per-diem-rates", response_model=PerDiemRateHistory)
 def set_per_diem_rates(
-    body: PerDiemRates,
+    body: PerDiemRateHistory,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    saved = travel_module.set_rates(db, body.model_dump())
+    travel_module.set_rate_history(db, [r.model_dump() for r in body.rates])
+    travel_module.set_domestic_topup(db, body.domestic_topup)
     audit.record(db, user, "update", "setting", None, "per-diem rates")
     db.commit()
-    return PerDiemRates(**saved)
+    return _history_out(db)
+
+
+def _foreign_out(rows: list[dict]) -> ForeignPerDiemRates:
+    """The open-ended sentinel is an internal detail — the API says null."""
+    return ForeignPerDiemRates(rates=[
+        {**r, "valid_from": None if r["valid_from"] == travel_module.BEGINNING else r["valid_from"]}
+        for r in rows
+    ])
+
+
+@router.get("/travel/foreign-per-diem-rates", response_model=ForeignPerDiemRates)
+def get_foreign_per_diem_rates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _foreign_out(travel_module.get_foreign_rates(db))
+
+
+@router.patch("/travel/foreign-per-diem-rates", response_model=ForeignPerDiemRates)
+def set_foreign_per_diem_rates(
+    body: ForeignPerDiemRates,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    saved = travel_module.set_foreign_rates(db, [r.model_dump() for r in body.rates])
+    audit.record(db, user, "update", "setting", None, f"foreign per-diem rates ({len(saved)})")
+    db.commit()
+    return _foreign_out(saved)
 
 
 # ---- Routing key ----
@@ -226,8 +264,8 @@ def list_travels(
     if name:
         stmt = stmt.where(Travel.traveller_name == name)
     stmt = stmt.order_by(Travel.traveller_name, Travel.trip_date, Travel.id)
-    rates = travel_module.get_rates(db)
-    return [serialize(t, rates) for t in db.scalars(stmt)]
+    book = travel_module.load_rate_book(db)
+    return [serialize(t, book) for t in db.scalars(stmt)]
 
 
 @router.get("/periods/{period_id}/travel-names", response_model=list[str])
@@ -264,7 +302,7 @@ def create_travel(
     audit.record(db, user, "create", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 @router.post("/periods/{period_id}/travels/bulk", response_model=list[TravelOut], status_code=201)
@@ -291,10 +329,10 @@ def bulk_create_travels(
     audit.record(db, user, "create", "travel", None,
                  f"bulk {len(created)} trips ({payload.traveller_name})")
     db.commit()
-    rates = travel_module.get_rates(db)
+    book = travel_module.load_rate_book(db)
     for t in created:
         db.refresh(t)
-    return [serialize(t, rates) for t in created]
+    return [serialize(t, book) for t in created]
 
 
 @router.post("/travels/{travel_id}/duplicate", response_model=TravelOut, status_code=201)
@@ -311,13 +349,16 @@ def duplicate_travel(
         period_id=src.period_id,
         traveller_name=src.traveller_name, traveller_address=src.traveller_address,
         trip_date=src.trip_date, end_date=src.end_date, purpose=src.purpose,
+        vehicle_id=src.vehicle_id,
     )
     db.add(clone)
     db.flush()
     for leg in src.legs:
         db.add(TravelLeg(
             travel_id=clone.id, order_idx=leg.order_idx,
+            kind=leg.kind, note=leg.note, country=leg.country,
             from_place=leg.from_place, to_place=leg.to_place, transport=leg.transport,
+            leg_date=leg.leg_date,
             depart_time=leg.depart_time, arrive_time=leg.arrive_time,
             distance_km=leg.distance_km, duration_min=leg.duration_min,
             expense=leg.expense, per_diem=leg.per_diem,
@@ -325,7 +366,7 @@ def duplicate_travel(
     audit.record(db, user, "create", "travel", clone.id, f"duplicate of {src.id}")
     db.commit()
     db.refresh(clone)
-    return serialize(clone, travel_module.get_rates(db))
+    return serialize(clone, travel_module.load_rate_book(db))
 
 
 @router.patch("/travels/{travel_id}", response_model=TravelOut)
@@ -360,7 +401,7 @@ def update_travel(
     audit.record(db, user, "update", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 @router.delete("/travels/{travel_id}", status_code=204)
@@ -411,7 +452,7 @@ def add_leg(
                  f"{leg.from_place}→{leg.to_place} (trip {travel_id})")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 @router.patch("/travel-legs/{leg_id}", response_model=TravelOut)
@@ -431,7 +472,7 @@ def update_leg(
     _sync_logbook(db, t)
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 @router.delete("/travel-legs/{leg_id}", response_model=TravelOut)
@@ -448,7 +489,7 @@ def delete_leg(
     _sync_logbook(db, t)
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 @router.post("/travel-legs/{leg_id}/route", response_model=TravelOut)
@@ -467,7 +508,7 @@ def recalculate_leg_route(
         )
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 # ---- Create travel from logbook trip ----
@@ -532,7 +573,7 @@ def create_travel_from_trip(
     audit.record(db, user, "create", "travel", t.id, f"from logbook trip {tid}")
     db.commit()
     db.refresh(t)
-    return serialize(t, travel_module.get_rates(db))
+    return serialize(t, travel_module.load_rate_book(db))
 
 
 # ---- Export ----
@@ -557,8 +598,9 @@ def export_travels(
     if not travels:
         raise HTTPException(status_code=404, detail="No trips for that person in this month")
     address = next((t.traveller_address for t in travels if t.traveller_address), "")
-    rates = travel_module.get_rates(db)
-    data = travel_module.build_xlsx(name, address, period.year, period.month, travels, rates)
+    data = travel_module.build_xlsx(
+        name, address, period.year, period.month, travels, travel_module.load_rate_book(db)
+    )
 
     month_name = travel_module._SK_MONTHS.get(period.month, str(period.month))
     fname = _ascii(f"{name}_Cestovne_{month_name}_{period.year}") + ".xlsx"
@@ -581,7 +623,7 @@ def export_travels_year(
     if not periods:
         raise HTTPException(status_code=404, detail=f"No months recorded for {year}")
 
-    rates = travel_module.get_rates(db)
+    book = travel_module.load_rate_book(db)
     buf = io.BytesIO()
     added = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -599,7 +641,9 @@ def export_travels_year(
                 if not travels:
                     continue
                 address = next((t.traveller_address for t in travels if t.traveller_address), "")
-                data = travel_module.build_xlsx(name, address, period.year, period.month, travels, rates)
+                data = travel_module.build_xlsx(
+                    name, address, period.year, period.month, travels, book
+                )
                 month_name = travel_module._SK_MONTHS.get(period.month, str(period.month))
                 fname = _ascii(f"{name}_Cestovne_{month_name}_{period.year}") + ".xlsx"
                 zf.writestr(fname, data)

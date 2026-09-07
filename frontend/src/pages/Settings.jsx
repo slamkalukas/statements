@@ -1,4 +1,4 @@
-import { FolderOpen, HardDrive, MapPin, Plane, Save } from "lucide-react";
+import { FolderOpen, Globe, HardDrive, MapPin, Plane, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Spinner, Toast } from "../components/UI";
@@ -19,6 +19,9 @@ export default function Settings() {
   const [rates, setRates] = useState(null);
   const [savingRates, setSavingRates] = useState(false);
 
+  const [foreignRates, setForeignRates] = useState(null);
+  const [savingForeign, setSavingForeign] = useState(false);
+
   const [orsConfigured, setOrsConfigured] = useState(null);
   const [orsKey, setOrsKey] = useState("");
   const [savingOrs, setSavingOrs] = useState(false);
@@ -29,6 +32,9 @@ export default function Settings() {
       setLayout(s.layout);
     }).catch(() => {});
     api.get("/travel/per-diem-rates").then(setRates).catch(() => {});
+    api.get("/travel/foreign-per-diem-rates")
+      .then((r) => setForeignRates(r.rates))
+      .catch(() => setForeignRates([]));
     api.get("/travel/routing-key").then((r) => setOrsConfigured(r.configured)).catch(() => {});
   }, []);
 
@@ -55,7 +61,13 @@ export default function Settings() {
     setSavingRates(true);
     try {
       const saved = await api.patch("/travel/per-diem-rates", {
-        band1: Number(rates.band1), band2: Number(rates.band2), band3: Number(rates.band3),
+        rates: rates.rates.map((r) => ({
+          valid_from: r.valid_from || null,
+          band1: Number(r.band1) || 0,
+          band2: Number(r.band2) || 0,
+          band3: Number(r.band3) || 0,
+        })),
+        domestic_topup: rates.domestic_topup,
       });
       setRates(saved);
       setToast("Per-diem rates saved");
@@ -65,6 +77,35 @@ export default function Settings() {
       setTimeout(() => setToast(""), 3000);
     } finally {
       setSavingRates(false);
+    }
+  }
+
+  const setRateRow = (i, key, value) => setRates({
+    ...rates,
+    rates: rates.rates.map((r, j) => (j === i ? { ...r, [key]: value } : r)),
+  });
+
+  async function saveForeignRates(e) {
+    e.preventDefault();
+    const rows = foreignRates
+      .filter((r) => r.code.trim())
+      .map((r) => ({
+        code: r.code.trim(),
+        name: r.name.trim(),
+        rate: Number(r.rate) || 0,
+        valid_from: r.valid_from || null,
+      }));
+    setSavingForeign(true);
+    try {
+      const saved = await api.patch("/travel/foreign-per-diem-rates", { rates: rows });
+      setForeignRates(saved.rates);
+      setToast("Foreign per-diem rates saved");
+      setTimeout(() => setToast(""), 2200);
+    } catch (err) {
+      setToast("Failed to save: " + err.message);
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setSavingForeign(false);
     }
   }
 
@@ -181,31 +222,165 @@ export default function Settings() {
         </h3>
         <p className="page-sub" style={{ marginBottom: 16 }}>
           Meal-allowance bands used to auto-calculate a trip's per-diem from its duration.
+          Add a row when the rates change — each trip uses the bands in force on its own
+          date, so a new rate doesn't rewrite earlier months.
         </p>
         {rates ? (
-          <form onSubmit={saveRates} className="stack" style={{ gap: 12 }}>
-            <div className="row-2">
-              <div className="field">
-                <label>5–12 hours (€)</label>
-                <input type="number" step="0.01" value={rates.band1}
-                       onChange={(e) => setRates({ ...rates, band1: e.target.value })} />
-              </div>
-              <div className="field">
-                <label>12–18 hours (€)</label>
-                <input type="number" step="0.01" value={rates.band2}
-                       onChange={(e) => setRates({ ...rates, band2: e.target.value })} />
-              </div>
+          <form onSubmit={saveRates} className="stack" style={{ gap: 8 }}>
+            <div style={{ display: "flex", gap: 6, fontSize: 12 }} className="doc-meta">
+              <span style={{ flex: "0 0 140px" }}>Valid from</span>
+              <span style={{ flex: 1 }}>5–12 h (€)</span>
+              <span style={{ flex: 1 }}>12–18 h (€)</span>
+              <span style={{ flex: 1 }}>18 h+ (€)</span>
+              <span style={{ flex: "0 0 32px" }} />
             </div>
-            <div className="field" style={{ maxWidth: 280 }}>
-              <label>Over 18 hours (€)</label>
-              <input type="number" step="0.01" value={rates.band3}
-                     onChange={(e) => setRates({ ...rates, band3: e.target.value })} />
+            {rates.rates.map((row, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  type="date" style={{ flex: "0 0 140px" }}
+                  title={row.valid_from ? undefined : "Applies to everything before the next row"}
+                  value={row.valid_from || ""}
+                  onChange={(e) => setRateRow(i, "valid_from", e.target.value)}
+                />
+                {["band1", "band2", "band3"].map((band) => (
+                  <input
+                    key={band} type="number" step="0.01" min="0" style={{ flex: 1 }}
+                    value={row[band]}
+                    onChange={(e) => setRateRow(i, band, e.target.value)}
+                  />
+                ))}
+                <button
+                  type="button" className="btn btn-ghost btn-sm" title="Remove"
+                  style={{ flex: "0 0 32px" }}
+                  disabled={rates.rates.length <= 1}
+                  onClick={() => setRates({ ...rates, rates: rates.rates.filter((_, j) => j !== i) })}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+              <input
+                type="checkbox" style={{ width: "auto" }}
+                checked={rates.domestic_topup}
+                onChange={(e) => setRates({ ...rates, domestic_topup: e.target.checked })}
+              />
+              Also pay domestic stravné for the Slovak part of a foreign-trip day
+            </label>
+            <p className="doc-meta">
+              Under 5 hours = no per-diem, and the Slovak part of a foreign day only counts
+              when it reaches 5 hours on its own — the same hours are never paid twice.
+              A trip can still override the amount per leg.
+            </p>
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button
+                type="button" className="btn btn-ghost btn-sm"
+                onClick={() => setRates({
+                  ...rates,
+                  rates: [...rates.rates, { valid_from: "", band1: 0, band2: 0, band3: 0 }],
+                })}
+              >
+                <Plus size={14} /> Add rate change
+              </button>
+              <button className="btn btn-secondary" type="submit" disabled={savingRates}
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {savingRates ? <Spinner /> : <Save size={14} />} Save rates
+              </button>
             </div>
-            <p className="doc-meta">Under 5 hours = no per-diem. A trip can still override the amount individually.</p>
-            <button className="btn btn-secondary" type="submit" disabled={savingRates}
-                    style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: 160 }}>
-              {savingRates ? <Spinner /> : <Save size={14} />} Save rates
-            </button>
+          </form>
+        ) : (
+          <Spinner />
+        )}
+      </div>
+
+      <div className="card card-pad" style={{ maxWidth: 620, marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+          <Globe size={18} /> Foreign per-diem rates (Zahraničné stravné)
+        </h3>
+        <p className="page-sub" style={{ marginBottom: 16 }}>
+          Basic daily rate per country. A trip marked with a country uses these instead of
+          the bands above: 25 % of the rate for up to 6 h abroad that day, 50 % up to 12 h,
+          100 % over 12 h — counted per calendar day.
+        </p>
+        {foreignRates ? (
+          <form onSubmit={saveForeignRates} className="stack" style={{ gap: 8 }}>
+            {foreignRates.length > 0 && (
+              <div style={{ display: "flex", gap: 6, fontSize: 12 }} className="doc-meta">
+                <span style={{ flex: "0 0 70px" }}>Code</span>
+                <span style={{ flex: 1 }}>Country</span>
+                <span style={{ flex: "0 0 100px" }}>€ / day</span>
+                <span style={{ flex: "0 0 140px" }}>Valid from</span>
+                <span style={{ flex: "0 0 32px" }} />
+              </div>
+            )}
+            {foreignRates.map((row, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  style={{ flex: "0 0 70px", textTransform: "uppercase" }}
+                  placeholder="IT"
+                  maxLength={8}
+                  value={row.code}
+                  onChange={(e) => setForeignRates(
+                    foreignRates.map((r, j) => (j === i ? { ...r, code: e.target.value } : r))
+                  )}
+                />
+                <input
+                  style={{ flex: 1 }}
+                  placeholder="Taliansko"
+                  value={row.name}
+                  onChange={(e) => setForeignRates(
+                    foreignRates.map((r, j) => (j === i ? { ...r, name: e.target.value } : r))
+                  )}
+                />
+                <input
+                  type="number" step="0.01" min="0"
+                  style={{ flex: "0 0 100px" }}
+                  placeholder="45.00"
+                  value={row.rate}
+                  onChange={(e) => setForeignRates(
+                    foreignRates.map((r, j) => (j === i ? { ...r, rate: e.target.value } : r))
+                  )}
+                />
+                <input
+                  type="date"
+                  style={{ flex: "0 0 140px" }}
+                  title="Leave empty to apply from the beginning. Add a second row for the same country when its rate changes."
+                  value={row.valid_from || ""}
+                  onChange={(e) => setForeignRates(
+                    foreignRates.map((r, j) => (j === i ? { ...r, valid_from: e.target.value } : r))
+                  )}
+                />
+                <button
+                  type="button" className="btn btn-ghost btn-sm" title="Remove"
+                  style={{ flex: "0 0 32px" }}
+                  onClick={() => setForeignRates(foreignRates.filter((_, j) => j !== i))}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            {foreignRates.length === 0 && (
+              <p className="doc-meta">
+                No countries configured — trips marked as foreign will show €0 until you add one.
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button
+                type="button" className="btn btn-ghost btn-sm"
+                onClick={() => setForeignRates([...foreignRates, { code: "", name: "", rate: "", valid_from: "" }])}
+              >
+                <Plus size={14} /> Add country
+              </button>
+              <button className="btn btn-secondary" type="submit" disabled={savingForeign}
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {savingForeign ? <Spinner /> : <Save size={14} />} Save rates
+              </button>
+            </div>
+            <p className="doc-meta">
+              Rates are set by an MF SR opatrenie and change during the year. Add a second
+              row for the same country with the date the new rate takes effect — earlier
+              trips keep reporting the rate that applied when they happened.
+            </p>
           </form>
         ) : (
           <Spinner />

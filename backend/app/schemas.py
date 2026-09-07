@@ -138,6 +138,8 @@ class TravelLegBase(BaseModel):
     # training) with no movement, described by `note`.
     kind: Literal["travel", "stay"] = "travel"
     note: str = Field(default="", max_length=255)
+    # Country this leg arrives in; empty = home (domestic per-diem bands).
+    country: str = Field(default="", max_length=8)
     from_place: str = Field(default="", max_length=255)
     to_place: str = Field(default="", max_length=255)
     transport: str = Field(default="", max_length=60)
@@ -156,6 +158,7 @@ class TravelLegCreate(TravelLegBase):
 class TravelLegUpdate(BaseModel):
     kind: Literal["travel", "stay"] | None = None
     note: str | None = Field(default=None, max_length=255)
+    country: str | None = Field(default=None, max_length=8)
     from_place: str | None = Field(default=None, max_length=255)
     to_place: str | None = Field(default=None, max_length=255)
     transport: str | None = Field(default=None, max_length=60)
@@ -218,6 +221,33 @@ class PerDiemRates(BaseModel):
     band1: float = Field(ge=0)  # 5–12 h
     band2: float = Field(ge=0)  # 12–18 h
     band3: float = Field(ge=0)  # over 18 h
+
+
+class PerDiemRateRow(PerDiemRates):
+    """One set of domestic bands and the date it takes effect. Null valid_from
+    means "since the beginning", so earlier trips still resolve to something."""
+    valid_from: date | None = None
+
+
+class PerDiemRateHistory(BaseModel):
+    rates: list[PerDiemRateRow] = Field(default_factory=list, max_length=100)
+    # Whether the Slovak part of a day on a foreign trip also earns domestic
+    # stravné, when those hours reach 5 h on their own.
+    domestic_topup: bool = False
+
+
+class ForeignPerDiemRate(BaseModel):
+    """Basic daily rate for one country (zahraničné stravné). Apportioned per
+    calendar day abroad: 25 % up to 6 h, 50 % up to 12 h, 100 % over 12 h.
+    A country may appear more than once with different valid_from dates."""
+    code: str = Field(min_length=1, max_length=8)   # e.g. "IT"
+    name: str = Field(default="", max_length=60)    # e.g. "Taliansko"
+    rate: float = Field(ge=0)                       # EUR per day
+    valid_from: date | None = None
+
+
+class ForeignPerDiemRates(BaseModel):
+    rates: list[ForeignPerDiemRate] = Field(default_factory=list, max_length=1000)
 
 
 # ---- Logbook (Kniha jázd) ----

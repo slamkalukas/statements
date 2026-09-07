@@ -7,7 +7,7 @@ trip total is their sum. The export reproduces the two-sheet template:
 """
 import io
 import json
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from .models import Setting, Travel
@@ -15,6 +15,21 @@ from .models import Setting, Travel
 RATES_KEY = "per_diem_rates"
 # Slovak 2025 defaults: 5–12h, >12–18h, >18h. Below 5h -> 0.
 DEFAULT_RATES = {"band1": 8.80, "band2": 13.10, "band3": 19.50}
+
+# Zahraničné stravné: a basic daily rate per country, apportioned per calendar
+# day by time spent abroad. Rates are set by an MF SR opatrenie and change
+# during the year, so they are configured in Settings rather than hardcoded.
+FOREIGN_RATES_KEY = "foreign_per_diem_rates"
+
+# Whether the Slovak part of a day on a foreign trip also earns domestic stravné
+# (only when those hours reach the 5 h threshold on their own).
+DOMESTIC_TOPUP_KEY = "per_diem_domestic_topup"
+
+# Both rate tables are effective-dated: a row applies from its valid_from until
+# superseded by a later one, so re-rating a country next quarter does not rewrite
+# what last quarter's trips reported. A row with no valid_from applies from the
+# beginning of time, which is how pre-dating rows are read back.
+BEGINNING = date.min
 
 COMPANY = "dotCUBE s.r.o"
 
@@ -33,25 +48,179 @@ def is_company_car_transport(transport: str | None) -> bool:
     return any(marker in t for marker in _COMPANY_CAR_MARKERS)
 
 
-def get_rates(db) -> dict:
+def _parse_valid_from(value) -> date:
+    if not value:
+        return BEGINNING
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return BEGINNING
+
+
+def _effective(rows: list[dict], on: date):
+    """The last row whose valid_from is not after `on`. Rows must be sorted."""
+    chosen = None
+    for row in rows:
+        if row["valid_from"] <= on:
+            chosen = row
+        else:
+            break
+    return chosen
+
+
+def get_rate_history(db) -> list[dict]:
+    """Domestic bands over time: [{valid_from, band1, band2, band3}] oldest first."""
     row = db.query(Setting).filter(Setting.key == RATES_KEY).first()
-    if row and row.value:
-        try:
-            data = json.loads(row.value)
-            return {k: float(data.get(k, DEFAULT_RATES[k])) for k in DEFAULT_RATES}
-        except (ValueError, TypeError):
-            pass
-    return dict(DEFAULT_RATES)
+    if not (row and row.value):
+        return [{"valid_from": BEGINNING, **DEFAULT_RATES}]
+    try:
+        data = json.loads(row.value)
+    except (ValueError, TypeError):
+        return [{"valid_from": BEGINNING, **DEFAULT_RATES}]
+    # Pre-dating shape: a single {band1, band2, band3} dict with no history.
+    if isinstance(data, dict):
+        data = [data]
+    history = _clean_rate_history(data if isinstance(data, list) else [])
+    return history or [{"valid_from": BEGINNING, **DEFAULT_RATES}]
+
+
+def _clean_rate_history(rows) -> list[dict]:
+    out: list[dict] = []
+    seen: set[date] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        valid_from = _parse_valid_from(item.get("valid_from"))
+        if valid_from in seen:
+            continue
+        seen.add(valid_from)
+        bands = {}
+        for k in DEFAULT_RATES:
+            try:
+                bands[k] = round(float(item.get(k, DEFAULT_RATES[k])), 2)
+            except (TypeError, ValueError):
+                bands[k] = DEFAULT_RATES[k]
+        out.append({"valid_from": valid_from, **bands})
+    return sorted(out, key=lambda r: r["valid_from"])
+
+
+def set_rate_history(db, rows) -> list[dict]:
+    clean = _clean_rate_history(rows) or [{"valid_from": BEGINNING, **DEFAULT_RATES}]
+    payload = json.dumps([
+        {**{k: r[k] for k in DEFAULT_RATES},
+         "valid_from": None if r["valid_from"] == BEGINNING else r["valid_from"].isoformat()}
+        for r in clean
+    ])
+    row = db.query(Setting).filter(Setting.key == RATES_KEY).first()
+    if row:
+        row.value = payload
+    else:
+        db.add(Setting(key=RATES_KEY, value=payload))
+    return clean
+
+
+def get_rates(db, on: date | None = None) -> dict:
+    """The domestic bands in force on a date (today when not given)."""
+    history = get_rate_history(db)
+    chosen = _effective(history, on or date.today()) or history[0]
+    return {k: chosen[k] for k in DEFAULT_RATES}
 
 
 def set_rates(db, rates: dict) -> dict:
-    clean = {k: round(float(rates.get(k, DEFAULT_RATES[k])), 2) for k in DEFAULT_RATES}
-    row = db.query(Setting).filter(Setting.key == RATES_KEY).first()
+    """Replace the whole domestic history with one open-ended set of bands."""
+    clean = set_rate_history(db, [{**rates, "valid_from": None}])
+    return {k: clean[0][k] for k in DEFAULT_RATES}
+
+
+def get_domestic_topup(db) -> bool:
+    row = db.query(Setting).filter(Setting.key == DOMESTIC_TOPUP_KEY).first()
+    return bool(row and row.value == "1")
+
+
+def set_domestic_topup(db, enabled: bool) -> bool:
+    row = db.query(Setting).filter(Setting.key == DOMESTIC_TOPUP_KEY).first()
     if row:
-        row.value = json.dumps(clean)
+        row.value = "1" if enabled else "0"
     else:
-        db.add(Setting(key=RATES_KEY, value=json.dumps(clean)))
+        db.add(Setting(key=DOMESTIC_TOPUP_KEY, value="1" if enabled else "0"))
+    return enabled
+
+
+def get_foreign_rates(db) -> list[dict]:
+    """Configured foreign daily rates: [{code, name, rate}], sorted by name."""
+    row = db.query(Setting).filter(Setting.key == FOREIGN_RATES_KEY).first()
+    if not (row and row.value):
+        return []
+    try:
+        data = json.loads(row.value)
+    except (ValueError, TypeError):
+        return []
+    return _clean_foreign_rates(data if isinstance(data, list) else [])
+
+
+def _clean_foreign_rates(rows) -> list[dict]:
+    """Normalise rate rows. A country may appear several times with different
+    valid_from dates — that is its rate history, not a duplicate."""
+    out: list[dict] = []
+    seen: set[tuple[str, date]] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip().upper()
+        if not code:
+            continue
+        valid_from = _parse_valid_from(item.get("valid_from"))
+        if (code, valid_from) in seen:
+            continue
+        seen.add((code, valid_from))
+        try:
+            rate = round(float(item.get("rate") or 0), 2)
+        except (TypeError, ValueError):
+            rate = 0.0
+        out.append({
+            "code": code,
+            "name": str(item.get("name") or "").strip() or code,
+            "rate": rate,
+            "valid_from": valid_from,
+        })
+    return sorted(out, key=lambda r: (r["name"], r["valid_from"]))
+
+
+def set_foreign_rates(db, rows) -> list[dict]:
+    clean = _clean_foreign_rates(rows)
+    payload = json.dumps([
+        {"code": r["code"], "name": r["name"], "rate": r["rate"],
+         "valid_from": None if r["valid_from"] == BEGINNING else r["valid_from"].isoformat()}
+        for r in clean
+    ])
+    row = db.query(Setting).filter(Setting.key == FOREIGN_RATES_KEY).first()
+    if row:
+        row.value = payload
+    else:
+        db.add(Setting(key=FOREIGN_RATES_KEY, value=payload))
     return clean
+
+
+def foreign_rate_for(code: str, foreign_rates: list[dict], on: date | None = None) -> float:
+    """The daily rate in force for a country on a date, or 0 when not configured."""
+    wanted = (code or "").strip().upper()
+    if not wanted:
+        return 0.0
+    when = on or date.today()
+    rows = sorted(
+        (r for r in (foreign_rates or []) if r.get("code") == wanted),
+        key=lambda r: r["valid_from"],
+    )
+    chosen = _effective(rows, when)
+    return float(chosen["rate"]) if chosen else 0.0
+
+
+def foreign_countries(foreign_rates: list[dict]) -> list[dict]:
+    """One entry per configured country (its currently-latest name), for pickers."""
+    by_code: dict[str, dict] = {}
+    for row in sorted(foreign_rates or [], key=lambda r: r["valid_from"]):
+        by_code[row["code"]] = row
+    return sorted(by_code.values(), key=lambda r: r["name"])
 
 
 def duration_hours(date_from: date, date_to: date | None,
@@ -100,15 +269,162 @@ def _leg_times(t: Travel) -> tuple[time | None, time | None]:
     return t.legs[0].depart_time, t.legs[-1].arrive_time
 
 
-def effective_per_diem(t: Travel, rates: dict) -> Decimal:
+def _foreign_fraction(hours: float) -> Decimal:
+    """Share of the daily rate earned by time abroad in one calendar day:
+    25 % up to 6 h, 50 % over 6 and up to 12 h, 100 % over 12 h."""
+    if hours <= 6:
+        return Decimal("0.25")
+    if hours <= 12:
+        return Decimal("0.50")
+    return Decimal("1")
+
+
+class RateBook:
+    """Resolves the rates in force on a given day, so re-rating a country later
+    does not change what an earlier trip reports."""
+
+    def __init__(self, domestic_history: list[dict], foreign_rates: list[dict],
+                 domestic_topup: bool = False):
+        self.domestic_history = domestic_history or [{"valid_from": BEGINNING, **DEFAULT_RATES}]
+        self.foreign_rates = foreign_rates or []
+        self.domestic_topup = domestic_topup
+
+    def domestic(self, on: date) -> dict:
+        chosen = _effective(self.domestic_history, on) or self.domestic_history[0]
+        return {k: chosen[k] for k in DEFAULT_RATES}
+
+    def foreign(self, code: str, on: date) -> float:
+        return foreign_rate_for(code, self.foreign_rates, on)
+
+
+def leg_effective_date(t: Travel, index: int, leg) -> date:
+    """Which calendar day a leg happens on: the trip's start for the first leg,
+    its end for the last, and the leg's own date in between."""
+    end = t.end_date or t.trip_date
+    if index == 0:
+        return t.trip_date
+    if index == len(t.legs) - 1:
+        return end
+    return leg.leg_date or t.trip_date
+
+
+def is_foreign_trip(t: Travel) -> bool:
+    return any((leg.country or "").strip() for leg in t.legs if leg.kind != "stay")
+
+
+def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
+    """Where the traveller was, as (from, to, country) spans.
+
+    You are in a leg's destination country from the moment that leg arrives until
+    the next leg arrives somewhere else — so the flight home counts as time abroad
+    until it lands, and a stay simply doesn't move you. Country "" means home.
+    """
+    legs = list(t.legs)
+    moves = [(i, l) for i, l in enumerate(legs) if l.kind != "stay"]
+    if not moves:
+        return []
+    first_i, first = moves[0]
+    last_i, last = moves[-1]
+    if first.depart_time is None or last.arrive_time is None:
+        return []
+
+    start = datetime.combine(leg_effective_date(t, first_i, first), first.depart_time)
+    end = datetime.combine(leg_effective_date(t, last_i, last), last.arrive_time)
+    if end <= start:
+        return []
+
+    out: list[tuple[datetime, datetime, str]] = []
+    cursor, country = start, ""
+    for i, leg in moves:
+        if leg.arrive_time is None:
+            continue
+        arrive = datetime.combine(leg_effective_date(t, i, leg), leg.arrive_time)
+        arrive = min(max(arrive, cursor), end)
+        if arrive > cursor:
+            out.append((cursor, arrive, country))
+            cursor = arrive
+        country = (leg.country or "").strip().upper()
+    if cursor < end:
+        out.append((cursor, end, country))
+    return out
+
+
+def per_diem_days(t: Travel, book: RateBook) -> list[dict]:
+    """One line per calendar day of a foreign trip.
+
+    Per day: the band is set by the total hours abroad, and the rate by the
+    country where most of those hours were spent. The Slovak part of the day
+    earns domestic stravné on its own hours only when the top-up setting is on
+    — the same hours are never paid twice.
+    """
+    minutes: dict[date, dict[str, int]] = {}
+    for start, end, country in _presence_intervals(t):
+        cursor = start
+        while cursor < end:
+            next_midnight = datetime.combine(cursor.date() + timedelta(days=1), time(0, 0))
+            chunk_end = min(next_midnight, end)
+            day = minutes.setdefault(cursor.date(), {})
+            day[country] = day.get(country, 0) + int((chunk_end - cursor).total_seconds() // 60)
+            cursor = chunk_end
+
+    lines: list[dict] = []
+    for day in sorted(minutes):
+        by_country = minutes[day]
+        abroad = {c: m for c, m in by_country.items() if c}
+        abroad_min = sum(abroad.values())
+        home_min = by_country.get("", 0)
+
+        amount = Decimal("0.00")
+        country = ""
+        rate = 0.0
+        if abroad_min:
+            # Most hours that day decides which country's rate applies.
+            country = max(sorted(abroad), key=lambda c: abroad[c])
+            rate = book.foreign(country, day)
+            amount += Decimal(str(rate)) * _foreign_fraction(abroad_min / 60)
+
+        home_amount = Decimal("0.00")
+        if home_min and (not abroad_min or book.domestic_topup):
+            home_amount = Decimal(str(_band_amount(home_min / 60, book.domestic(day))))
+            amount += home_amount
+
+        lines.append({
+            "date": day,
+            "country": country,
+            "rate": rate,
+            "abroad_hours": round(abroad_min / 60, 2),
+            "home_hours": round(home_min / 60, 2),
+            "home_amount": home_amount.quantize(Decimal("0.01")),
+            "amount": amount.quantize(Decimal("0.01")),
+        })
+    return lines
+
+
+def computed_trip_per_diem(t: Travel, book: RateBook) -> Decimal:
+    """Duration-derived per-diem: the per-day foreign engine once any leg has a
+    country, the domestic duration bands otherwise."""
+    if is_foreign_trip(t):
+        total = sum((line["amount"] for line in per_diem_days(t, book)), Decimal("0.00"))
+        return total.quantize(Decimal("0.01"))
+    first_depart, last_arrive = _leg_times(t)
+    return computed_per_diem(
+        t.trip_date, t.end_date, first_depart, last_arrive, book.domestic(t.trip_date)
+    )
+
+
+def effective_per_diem(t: Travel, book: RateBook) -> Decimal:
     """Sum of leg per_diems when any leg has one set; otherwise compute from duration."""
     if t.legs and any(leg.per_diem is not None for leg in t.legs):
         total = sum(
             Decimal(str(leg.per_diem)) for leg in t.legs if leg.per_diem is not None
         )
         return total.quantize(Decimal("0.01"))
-    first_depart, last_arrive = _leg_times(t)
-    return computed_per_diem(t.trip_date, t.end_date, first_depart, last_arrive, rates)
+    return computed_trip_per_diem(t, book)
+
+
+def load_rate_book(db) -> RateBook:
+    """Everything the per-diem calculation needs, read once per request."""
+    return RateBook(get_rate_history(db), get_foreign_rates(db), get_domestic_topup(db))
 
 
 def _fmt_date(d: date) -> str:
@@ -150,7 +466,7 @@ def _write_leg_money(sheet, row: int, leg, trip_pd: float | None, is_last_leg: b
 
 
 def build_xlsx(name: str, address: str, year: int, month: int,
-               travels: list[Travel], rates: dict) -> bytes:
+               travels: list[Travel], book: RateBook) -> bytes:
     """Render the two-sheet travel report for one person and month."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, Side
@@ -214,7 +530,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
     for t in travels:
         end = t.end_date or t.trip_date
         has_leg_per_diem = any(leg.per_diem is not None for leg in t.legs)
-        trip_pd = float(effective_per_diem(t, rates)) if not has_leg_per_diem else None
+        trip_pd = float(effective_per_diem(t, book)) if not has_leg_per_diem else None
 
         for i, leg in enumerate(t.legs):
             is_last_leg = (i == len(t.legs) - 1)

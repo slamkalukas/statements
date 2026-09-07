@@ -15,6 +15,7 @@ export default function Travel() {
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
   const [vehicles, setVehicles] = useState([]);
+  const [foreignRates, setForeignRates] = useState([]);
   const [exportingYear, setExportingYear] = useState(false);
 
   useEffect(() => {
@@ -23,6 +24,9 @@ export default function Travel() {
       if (ps.length) setPeriodId((cur) => cur ?? ps[0].id);
     });
     api.get("/vehicles").then(setVehicles).catch(() => {});
+    api.get("/travel/foreign-per-diem-rates")
+      .then((r) => setForeignRates(r.rates))
+      .catch(() => {});
   }, []);
 
   async function loadTravels(pid) {
@@ -174,6 +178,16 @@ export default function Travel() {
                               return <span>{label}</span>;
                             })()
                         }
+                        {(() => {
+                          const codes = [...new Set(
+                            t.legs.map((l) => l.country).filter(Boolean)
+                          )];
+                          return codes.length ? (
+                            <span className="doc-meta" title="Foreign trip — per-diem uses each country's daily rate">
+                              {" · "}{codes.join(", ")}
+                            </span>
+                          ) : null;
+                        })()}
                       </td>
                       <td>{t.purpose}</td>
                       <td className="right">
@@ -209,6 +223,7 @@ export default function Travel() {
           trip={editing.id ? editing : null}
           existing={travels || []}
           vehicles={vehicles}
+          foreignRates={foreignRates}
           onClose={() => setEditing(null)}
           onSaved={(msg) => { setEditing(null); flash(msg); loadTravels(periodId); }}
         />
@@ -317,7 +332,7 @@ function PlaceInput({ value, onChange, readOnly, placeholder, title, style }) {
 
 /** A day spent in one place: no route, no transport, no km — just where you
  *  were and what you were doing (conference, training, negotiations). */
-function StayCard({ leg, idx, trip, tripDate, endDate, onChange, onRemove }) {
+function StayCard({ leg, idx, trip, tripDate, endDate, country, onChange, onRemove }) {
   const multiDay = endDate && endDate !== tripDate;
   return (
     <div
@@ -330,7 +345,9 @@ function StayCard({ leg, idx, trip, tripDate, endDate, onChange, onRemove }) {
     >
       <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
         <span className="doc-meta" style={{ minWidth: 18, fontSize: 11 }}>#{idx + 1}</span>
-        <span className="doc-meta" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Pobyt</span>
+        <span className="doc-meta" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+          Pobyt{country ? ` · ${country}` : ""}
+        </span>
         <PlaceInput
           value={leg.from_place}
           placeholder="Place stayed in"
@@ -401,7 +418,7 @@ function StayCard({ leg, idx, trip, tripDate, endDate, onChange, onRemove }) {
 
 function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
   return {
-    kind: "travel", note: "",
+    kind: "travel", note: "", country: "",
     from_place: fromPlace, to_place: toPlace,
     transport: "Auto služobné",
     leg_date: "",
@@ -415,7 +432,7 @@ function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
 /** A day spent in one place — conference, training, negotiations — with no travel. */
 function emptyStay(order_idx, place = "") {
   return {
-    kind: "stay", note: "",
+    kind: "stay", note: "", country: "",
     from_place: place, to_place: place,
     transport: "",
     leg_date: "",
@@ -426,7 +443,7 @@ function emptyStay(order_idx, place = "") {
   };
 }
 
-function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
+function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, onSaved }) {
   const periodId = period.id;
   const [f, setF] = useState(() => ({
     traveller_name: trip?.traveller_name || "",
@@ -442,6 +459,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
       return trip.legs.map((l) => ({
         kind: l.kind || "travel",
         note: l.note || "",
+        country: l.country || "",
         from_place: l.from_place,
         to_place: l.to_place,
         transport: l.transport,
@@ -492,6 +510,22 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     () => legs.some((l) => l.transport === "Auto služobné"),
     [legs]
   );
+
+  // A country appears once per historical rate row — the picker wants one entry
+  // each, showing the most recent rate.
+  const countryOptions = useMemo(() => {
+    const byCode = new Map();
+    (foreignRates || []).forEach((r) => byCode.set(r.code, r));
+    return [...byCode.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [foreignRates]);
+
+  /** Where a stay happens: wherever the last travel leg before it arrived. */
+  function inheritedCountry(idx) {
+    for (let i = idx - 1; i >= 0; i--) {
+      if (legs[i].kind !== "stay") return legs[i].country || "";
+    }
+    return "";
+  }
 
   function onNameBlur() {
     if (f.traveller_address) return;
@@ -593,6 +627,8 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
     return legs.map((l, i) => ({
       kind: l.kind || "travel",
       note: (l.note || "").trim(),
+      // A stay doesn't move you — it inherits wherever the last leg arrived.
+      country: l.kind === "stay" ? "" : (l.country || ""),
       from_place: l.from_place.trim(),
       // A stay has no direction — both ends are the place you stayed in.
       to_place: (l.kind === "stay" ? l.from_place : l.to_place).trim(),
@@ -736,6 +772,7 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
                 trip={trip}
                 tripDate={f.trip_date}
                 endDate={f.end_date}
+                country={inheritedCountry(idx)}
                 onChange={(key, val) => setLeg(idx, key, val)}
                 onRemove={() => removeLeg(idx)}
               />
@@ -773,6 +810,22 @@ function TripModal({ period, trip, existing, vehicles, onClose, onSaved }) {
                     onChange={(e) => setLeg(idx, "transport", e.target.value)}
                   >
                     {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                  <select
+                    style={{ flex: "1 1 130px" }}
+                    title="Country this leg arrives in — sets which per-diem rate applies from here on"
+                    value={leg.country}
+                    onChange={(e) => setLeg(idx, "country", e.target.value)}
+                  >
+                    <option value="">— arrives home (SK) —</option>
+                    {countryOptions.map((r) => (
+                      <option key={r.code} value={r.code}>
+                        {r.name} ({r.code}) · {r.rate} €/deň
+                      </option>
+                    ))}
+                    {leg.country && !countryOptions.some((r) => r.code === leg.country) && (
+                      <option value={leg.country}>{leg.country} — no rate configured</option>
+                    )}
                   </select>
                   {f.end_date && f.end_date !== f.trip_date && !isFirst(idx) && !isLast(idx) && (
                     <input
