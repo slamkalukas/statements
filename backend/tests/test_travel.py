@@ -391,6 +391,35 @@ def test_trip_spanning_two_countries_rates_each_day_separately(client, auth_head
     assert trip["per_diem"] == 150.0
 
 
+def test_stay_can_name_its_own_country(client, auth_headers):
+    _set_foreign(client, auth_headers, [
+        {"code": "IT", "name": "Taliansko", "rate": 45},
+        {"code": "AT", "name": "Rakusko", "rate": 60},
+    ])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    # Fly to Rome, but spend the middle day at a conference in Vienna without a
+    # leg recording the hop — the stay says where it was.
+    trip = _trip(client, auth_headers, pid,
+                 trip_date="2026-09-01", end_date="2026-09-03", legs=[
+        {"from_place": "Nitra", "to_place": "Roma", "transport": "Lietadlo",
+         "country": "IT", "depart_time": "08:00", "arrive_time": "10:00"},
+        {"kind": "stay", "from_place": "Wien", "to_place": "Wien", "country": "AT",
+         "note": "konferencia", "leg_date": "2026-09-02"},
+        {"from_place": "Roma", "to_place": "Nitra", "transport": "Lietadlo",
+         "depart_time": "21:00", "arrive_time": "23:00"},
+    ]).json()
+    assert trip["legs"][1]["country"] == "AT"
+    # 1.9: 14 h IT -> 45. From 2.9 00:00 the stay puts you in Austria, so
+    # 2.9: 24 h AT -> 60, and 3.9: 23 h AT -> 60. Total 165.
+    assert trip["per_diem"] == 165.0
+
+
+def test_stay_without_a_country_still_inherits(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    assert _rome_trip(client, auth_headers, pid).json()["per_diem"] == 135.0
+
+
 def test_domestic_topup_pays_the_slovak_part_of_a_foreign_day(client, auth_headers):
     _set_foreign(client, auth_headers, [{"code": "IT", "name": "Taliansko", "rate": 45}])
     pid = _period(client, auth_headers, year=2026, month=9)

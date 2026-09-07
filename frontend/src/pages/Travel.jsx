@@ -5,8 +5,8 @@ import { EmptyState, Loading, Modal, MonthNav, Spinner, Toast } from "../compone
 import { SK_MONTHS, formatAmount, getLastVehicleId, rememberVehicleId } from "../utils";
 
 const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "Taxi", "MHD", "Iné"];
-// Transports for which driving distance is a sane estimate — skip flights/taxi/other.
-const ROUTABLE_TRANSPORTS = new Set(["Auto služobné", "Auto súkromné", "Bus", "MHD"]);
+// Only a car leg has km worth recording — and only a car's km is looked up.
+const CAR_TRANSPORTS = new Set(["Auto služobné", "Auto súkromné"]);
 
 export default function Travel() {
   const [periods, setPeriods] = useState(null);
@@ -332,7 +332,7 @@ function PlaceInput({ value, onChange, readOnly, placeholder, title, style }) {
 
 /** A day spent in one place: no route, no transport, no km — just where you
  *  were and what you were doing (conference, training, negotiations). */
-function StayCard({ leg, idx, trip, tripDate, endDate, country, onChange, onRemove }) {
+function StayCard({ leg, idx, trip, tripDate, endDate, inherited, countryOptions, onChange, onRemove }) {
   const multiDay = endDate && endDate !== tripDate;
   return (
     <div
@@ -345,9 +345,7 @@ function StayCard({ leg, idx, trip, tripDate, endDate, country, onChange, onRemo
     >
       <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
         <span className="doc-meta" style={{ minWidth: 18, fontSize: 11 }}>#{idx + 1}</span>
-        <span className="doc-meta" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-          Pobyt{country ? ` · ${country}` : ""}
-        </span>
+        <span className="doc-meta" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Pobyt</span>
         <PlaceInput
           value={leg.from_place}
           placeholder="Place stayed in"
@@ -368,6 +366,27 @@ function StayCard({ leg, idx, trip, tripDate, endDate, country, onChange, onRemo
       </div>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <select
+          style={{ flex: "0 0 190px" }}
+          title="Country you were in that day — defaults to wherever the previous leg arrived"
+          value={leg.country}
+          onChange={(e) => onChange("country", e.target.value)}
+        >
+          <option value="">
+            {inherited ? `— same as arrival (${inherited}) —` : "— same as arrival (SK) —"}
+          </option>
+          {countryOptions.map((r) => (
+            <option key={r.code} value={r.code}>
+              {r.name} ({r.code}) · {r.rate} €/deň
+            </option>
+          ))}
+          {countryOptions.length === 0 && (
+            <option value="" disabled>No countries yet — add them in Settings</option>
+          )}
+          {leg.country && !countryOptions.some((r) => r.code === leg.country) && (
+            <option value={leg.country}>{leg.country} — no rate configured</option>
+          )}
+        </select>
         <input
           style={{ flex: "1 1 220px" }}
           placeholder="What happened here (konferencia, školenie…)"
@@ -608,7 +627,7 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
       const fromPlace = leg.from_place.trim();
       const toPlace = leg.to_place.trim();
       if (
-        leg.kind === "stay" || !ROUTABLE_TRANSPORTS.has(leg.transport) ||
+        leg.kind === "stay" || !CAR_TRANSPORTS.has(leg.transport) ||
         !fromPlace || !toPlace || fromPlace === toPlace
       ) {
         return;
@@ -627,8 +646,7 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
     return legs.map((l, i) => ({
       kind: l.kind || "travel",
       note: (l.note || "").trim(),
-      // A stay doesn't move you — it inherits wherever the last leg arrived.
-      country: l.kind === "stay" ? "" : (l.country || ""),
+      country: l.country || "",
       from_place: l.from_place.trim(),
       // A stay has no direction — both ends are the place you stayed in.
       to_place: (l.kind === "stay" ? l.from_place : l.to_place).trim(),
@@ -772,7 +790,8 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
                 trip={trip}
                 tripDate={f.trip_date}
                 endDate={f.end_date}
-                country={inheritedCountry(idx)}
+                inherited={inheritedCountry(idx)}
+                countryOptions={countryOptions}
                 onChange={(key, val) => setLeg(idx, key, val)}
                 onRemove={() => removeLeg(idx)}
               />
@@ -807,7 +826,15 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
                   <select
                     style={{ flex: "1 1 130px" }}
                     value={leg.transport}
-                    onChange={(e) => setLeg(idx, "transport", e.target.value)}
+                    onChange={(e) => {
+                      const transport = e.target.value;
+                      setLegs((ls) => ls.map((l, i) => (
+                        i === idx
+                          // km belongs to a car leg — don't leave one stranded on a flight.
+                          ? { ...l, transport, distance_km: CAR_TRANSPORTS.has(transport) ? l.distance_km : "" }
+                          : l
+                      )));
+                    }}
                   >
                     {TRANSPORTS.map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
@@ -823,6 +850,9 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
                         {r.name} ({r.code}) · {r.rate} €/deň
                       </option>
                     ))}
+                    {countryOptions.length === 0 && (
+                      <option value="" disabled>No countries yet — add them in Settings</option>
+                    )}
                     {leg.country && !countryOptions.some((r) => r.code === leg.country) && (
                       <option value={leg.country}>{leg.country} — no rate configured</option>
                     )}
@@ -855,19 +885,23 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
                 </div>
                 {/* Expense + per-diem + km row */}
                 <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
-                  <input
-                    type="number" step="1" min="0"
-                    style={{ flex: "0 0 80px" }}
-                    placeholder="km"
-                    title="Auto-filled from From/To once both are set (for routable transports)"
-                    value={leg.distance_km}
-                    onChange={(e) => setLeg(idx, "distance_km", e.target.value)}
-                  />
-                  {calcIdx === idx && <Spinner />}
-                  {calcIdx !== idx && calcErrors[idx] && (
-                    <span className="doc-meta" style={{ color: "var(--danger, #e53)" }} title={calcErrors[idx]}>
-                      km lookup failed
-                    </span>
+                  {CAR_TRANSPORTS.has(leg.transport) && (
+                    <>
+                      <input
+                        type="number" step="1" min="0"
+                        style={{ flex: "0 0 80px" }}
+                        placeholder="km"
+                        title="Auto-filled from From/To once both are set"
+                        value={leg.distance_km}
+                        onChange={(e) => setLeg(idx, "distance_km", e.target.value)}
+                      />
+                      {calcIdx === idx && <Spinner />}
+                      {calcIdx !== idx && calcErrors[idx] && (
+                        <span className="doc-meta" style={{ color: "var(--danger, #e53)" }} title={calcErrors[idx]}>
+                          km lookup failed
+                        </span>
+                      )}
+                    </>
                   )}
                   <input
                     type="number" step="0.01" min="0"

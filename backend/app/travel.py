@@ -316,8 +316,10 @@ def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
     """Where the traveller was, as (from, to, country) spans.
 
     You are in a leg's destination country from the moment that leg arrives until
-    the next leg arrives somewhere else — so the flight home counts as time abroad
-    until it lands, and a stay simply doesn't move you. Country "" means home.
+    something moves you again — so the flight home counts as time abroad until it
+    lands. A stay normally inherits wherever you last arrived, but may name its
+    own country, which then applies from the start of that stay. Country "" means
+    home.
     """
     legs = list(t.legs)
     moves = [(i, l) for i, l in enumerate(legs) if l.kind != "stay"]
@@ -335,15 +337,24 @@ def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
 
     out: list[tuple[datetime, datetime, str]] = []
     cursor, country = start, ""
-    for i, leg in moves:
-        if leg.arrive_time is None:
-            continue
-        arrive = datetime.combine(leg_effective_date(t, i, leg), leg.arrive_time)
-        arrive = min(max(arrive, cursor), end)
-        if arrive > cursor:
-            out.append((cursor, arrive, country))
-            cursor = arrive
-        country = (leg.country or "").strip().upper()
+    for i, leg in enumerate(legs):
+        leg_country = (leg.country or "").strip().upper()
+        if leg.kind == "stay":
+            if not leg_country:
+                continue  # inherits — nothing moves, nothing to switch
+            switch_at = datetime.combine(
+                leg_effective_date(t, i, leg), leg.depart_time or time(0, 0)
+            )
+        else:
+            if leg.arrive_time is None:
+                continue
+            switch_at = datetime.combine(leg_effective_date(t, i, leg), leg.arrive_time)
+
+        switch_at = min(max(switch_at, cursor), end)
+        if switch_at > cursor:
+            out.append((cursor, switch_at, country))
+            cursor = switch_at
+        country = leg_country
     if cursor < end:
         out.append((cursor, end, country))
     return out
