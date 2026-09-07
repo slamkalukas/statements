@@ -8,6 +8,12 @@ const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietad
 // Only a car leg has km worth recording — and only a car's km is looked up.
 const CAR_TRANSPORTS = new Set(["Auto služobné", "Auto súkromné"]);
 
+/** Mirrors the backend's is_company_car_transport — a company car goes to the logbook. */
+function isCompanyCarTransport(transport) {
+  const t = (transport || "").toLowerCase();
+  return ["firemn", "služobn", "sluzob"].some((marker) => t.includes(marker));
+}
+
 export default function Travel() {
   const [periods, setPeriods] = useState(null);
   const [periodId, setPeriodId] = useState(null);
@@ -525,8 +531,10 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
     [repeat, weekdays, period.year, period.month]
   );
 
+  // Matched the way the backend decides what syncs to the logbook, so the picker
+  // can't hide on a leg the logbook would still pick up.
   const hasCarLeg = useMemo(
-    () => legs.some((l) => l.transport === "Auto služobné"),
+    () => legs.some((l) => l.kind !== "stay" && isCompanyCarTransport(l.transport)),
     [legs]
   );
 
@@ -746,26 +754,6 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
           <input value={f.purpose} onChange={set("purpose")} />
         </div>
 
-        {hasCarLeg && vehicles.length > 0 && (
-          <div className="field">
-            <label>Vehicle (Logbook)</label>
-            <select
-              value={f.vehicle_id}
-              onChange={(e) => {
-                set("vehicle_id")(e);
-                if (e.target.value) rememberVehicleId(Number(e.target.value));
-              }}
-            >
-              <option value="">— auto-select —</option>
-              {vehicles.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.ecv}{v.manufacturer ? ` · ${v.manufacturer}` : ""}{v.car_model ? ` ${v.car_model}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
         {/* Legs */}
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
@@ -925,6 +913,37 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
             First leg departs from Bydlisko; last leg returns to Bydlisko. Stravné per leg — fill when rates differ (SK vs. foreign). Leave blank on all legs to auto-calculate from duration.
           </p>
         </div>
+
+        {/* Right below the legs: this only appears once a leg uses a company car,
+            so it belongs next to where that transport is chosen. */}
+        {hasCarLeg && vehicles.length > 0 && (
+          <div className="field">
+            <label>Vehicle (Logbook)</label>
+            <select
+              value={f.vehicle_id}
+              onChange={(e) => {
+                set("vehicle_id")(e);
+                if (e.target.value) rememberVehicleId(Number(e.target.value));
+              }}
+            >
+              <option value="">— auto-select —</option>
+              {vehicles.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.ecv}{v.manufacturer ? ` · ${v.manufacturer}` : ""}{v.car_model ? ` ${v.car_model}` : ""}
+                </option>
+              ))}
+            </select>
+            <span className="doc-meta" style={{ marginTop: 4, display: "block" }}>
+              A company-car leg is recorded in the Kniha jázd under this vehicle.
+            </span>
+          </div>
+        )}
+        {hasCarLeg && vehicles.length === 0 && (
+          <p className="doc-meta">
+            A leg uses a company car, but no vehicles are registered — add one under Logbook
+            for this trip to appear in the Kniha jázd.
+          </p>
+        )}
 
         {!trip && (
           <div className="field">
