@@ -19,7 +19,15 @@ NET=pdtest-net
 DB=pdtest-db
 API=pdtest-api
 IMAGE=${BACKEND_IMAGE:-slamkalukas/statements-backend:latest}
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/backend/app"
+
+# Docker Desktop needs a Windows-style path here. Handing it a Git Bash POSIX
+# path (/c/Users/...) silently mounts a stale snapshot instead of the live
+# folder, so the container quietly serves old code — `pwd -W` avoids that.
+_root() {
+  cd "$(dirname "${BASH_SOURCE[0]}")/.."
+  if pwd -W >/dev/null 2>&1; then pwd -W; else pwd; fi
+}
+APP_DIR="$(_root)/backend/app"
 
 case "${1:-}" in
   up)

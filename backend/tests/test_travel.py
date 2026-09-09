@@ -411,6 +411,94 @@ def test_trip_spanning_two_countries_rates_each_day_separately(client, auth_head
     assert trip["per_diem"] == 150.0
 
 
+def _vienna_drive(client, auth_headers, pid, border_out=None, border_home=None):
+    """Drive to Vienna and back the next day. Overland, so the border decides
+    where each day's hours fall — not the arrival time."""
+    out = {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+           "country": "AT", "depart_time": "06:00", "arrive_time": "10:00"}
+    home = {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+            "depart_time": "18:00", "arrive_time": "22:00"}
+    if border_out:
+        out["border_time"] = border_out
+    if border_home:
+        home["border_time"] = border_home
+    return _trip(client, auth_headers, pid,
+                 trip_date="2026-09-01", end_date="2026-09-02", legs=[out, home]).json()
+
+
+def test_border_time_moves_the_hours_across_the_border(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "AT", "name": "Rakusko", "rate": 60}])
+    client.patch("/api/travel/per-diem-rates", headers=auth_headers, json={
+        "rates": [{"valid_from": None, "band1": 8.8, "band2": 13.1, "band3": 19.5}],
+        "domestic_topup": True,
+    })
+    pid = _period(client, auth_headers, year=2026, month=9)
+
+    # Without a border time the calculation falls back to arrival: abroad from
+    # 10:00 on the 1st (14 h -> 100 %) and until 22:00 on the 2nd (22 h -> 100 %),
+    # leaving 4 h in Slovakia on day 1 — under 5 h, so no domestic top-up.
+    assert _vienna_drive(client, auth_headers, pid)["per_diem"] == 120.0
+
+    # Crossing at 07:30 out and 20:30 back moves an hour of day 1 abroad and
+    # 1.5 h of day 2 home: day 1 = 1.5 h SK (nothing) + 16.5 h AT -> 60,
+    # day 2 = 20.5 h AT -> 60 plus 1.5 h SK (still under 5 h) -> 120 again,
+    # but the split itself has changed, which the report has to show.
+    withborder = _vienna_drive(client, auth_headers, pid,
+                               border_out="07:30", border_home="20:30")
+    assert withborder["per_diem"] == 120.0
+    assert withborder["legs"][0]["border_time"] == "07:30:00"
+
+
+def test_border_time_can_change_the_amount(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "AT", "name": "Rakusko", "rate": 60}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    tid = _period(client, auth_headers, year=2026, month=10)
+
+    # Leave at 06:00, reach Vienna at 10:00, but only cross at 23:30 — so day 1
+    # is almost entirely Slovak and earns 25 % abroad instead of 100 %.
+    late = _trip(client, auth_headers, tid, trip_date="2026-10-01", end_date="2026-10-02", legs=[
+        {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+         "country": "AT", "depart_time": "06:00", "arrive_time": "10:00",
+         "border_time": "23:30"},
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "18:00", "arrive_time": "22:00"},
+    ]).json()
+    # 1.10: 0.5 h abroad -> 25 % of 60 = 15.00. 2.10: 22 h -> 60.00.
+    assert late["per_diem"] == 75.0
+
+
+def test_border_crossing_appears_in_the_report(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "AT", "name": "Rakusko", "rate": 60}])
+    pid = _period(client, auth_headers, year=2026, month=9)
+    _vienna_drive(client, auth_headers, pid, border_out="07:30", border_home="20:30")
+
+    res = client.get(f"/api/periods/{pid}/travels/export",
+                     params={"name": "Nikoleta"}, headers=auth_headers)
+    vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
+    rows = [(c.row, c.value) for row in vpc.iter_rows() for c in row
+            if c.column == 3 and c.row >= 7 and isinstance(c.value, str)]  # data rows only
+    labels = [v for _, v in rows]
+    assert "Prechod hranice SK → AT" in labels
+    assert "Prechod hranice AT → SK" in labels
+    # It sits between that leg's Odchod and Príchod, where it happened.
+    order = [v.split(" ")[0] for v in labels]
+    assert order == ["Odchod", "Prechod", "Príchod", "Odchod", "Prechod", "Príchod"]
+    # And carries its time.
+    crossing_row = next(r for r, v in rows if v == "Prechod hranice SK → AT")
+    assert vpc.cell(crossing_row, 4).value == "7:30"
+
+
+def test_no_border_row_when_not_recorded(client, auth_headers):
+    pid = _period(client, auth_headers, year=2026, month=9)
+    _vienna_drive(client, auth_headers, pid)
+    res = client.get(f"/api/periods/{pid}/travels/export",
+                     params={"name": "Nikoleta"}, headers=auth_headers)
+    vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
+    labels = [c.value for row in vpc.iter_rows() for c in row
+              if c.column == 3 and isinstance(c.value, str)]
+    assert not any(l.startswith("Prechod") for l in labels)
+
+
 def test_stay_can_name_its_own_country(client, auth_headers):
     _set_foreign(client, auth_headers, [
         {"code": "IT", "name": "Taliansko", "rate": 45},

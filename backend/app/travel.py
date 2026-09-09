@@ -33,6 +33,10 @@ BEGINNING = date.min
 
 COMPANY = "dotCUBE s.r.o"
 
+# Shown on the report where a leg has no country of its own — the side of the
+# border the traveller starts and ends on.
+HOME_COUNTRY = "SK"
+
 _SK_MONTHS = {
     1: "Január", 2: "Február", 3: "Marec", 4: "Apríl", 5: "Máj", 6: "Jún",
     7: "Júl", 8: "August", 9: "September", 10: "Október", 11: "November", 12: "December",
@@ -315,11 +319,12 @@ def is_foreign_trip(t: Travel) -> bool:
 def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
     """Where the traveller was, as (from, to, country) spans.
 
-    You are in a leg's destination country from the moment that leg arrives until
-    something moves you again — so the flight home counts as time abroad until it
-    lands. A stay normally inherits wherever you last arrived, but may name its
-    own country, which then applies from the start of that stay. Country "" means
-    home.
+    You are in a leg's destination country from the moment that leg crosses the
+    border — its border_time when recorded, otherwise its arrival, which is what
+    the law counts for a flight. So the journey home stays abroad until it lands
+    or re-crosses. A stay normally inherits wherever you last arrived, but may
+    name its own country, which then applies from the start of that stay.
+    Country "" means home.
     """
     legs = list(t.legs)
     moves = [(i, l) for i, l in enumerate(legs) if l.kind != "stay"]
@@ -346,9 +351,12 @@ def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
                 leg_effective_date(t, i, leg), leg.depart_time or time(0, 0)
             )
         else:
-            if leg.arrive_time is None:
+            # Overland you change country at the border, not on arrival — the
+            # difference is what splits a day's domestic and foreign hours.
+            crossing = leg.border_time or leg.arrive_time
+            if crossing is None:
                 continue
-            switch_at = datetime.combine(leg_effective_date(t, i, leg), leg.arrive_time)
+            switch_at = datetime.combine(leg_effective_date(t, i, leg), crossing)
 
         switch_at = min(max(switch_at, cursor), end)
         if switch_at > cursor:
@@ -536,6 +544,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
         end = t.end_date or t.trip_date
         has_leg_per_diem = any(leg.per_diem is not None for leg in t.legs)
         trip_pd = float(effective_per_diem(t, book)) if not has_leg_per_diem else None
+        country_now = ""  # tracks where the traveller is, to label border crossings
 
         for i, leg in enumerate(t.legs):
             is_last_leg = (i == len(t.legs) - 1)
@@ -565,6 +574,8 @@ def build_xlsx(name: str, address: str, year: int, month: int,
                 for col in range(2, 9):
                     s2.cell(r, col).border = box
                 r += 1
+                if leg.country:
+                    country_now = leg.country
                 continue
 
             # Row 1: Odchod from_place at depart_time
@@ -575,6 +586,19 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             for col in range(2, 9):
                 s2.cell(r, col).border = box
             r += 1
+
+            # Between them, when travelling overland: the state border crossing,
+            # which is what decides how a day splits between the two countries.
+            if leg.border_time is not None:
+                s2.cell(r, 2).value = leg_date
+                s2.cell(r, 3).value = (
+                    f"Prechod hranice {country_now or HOME_COUNTRY} → {leg.country or HOME_COUNTRY}"
+                )
+                s2.cell(r, 4).value = _fmt_time(leg.border_time)
+                for col in range(2, 9):
+                    s2.cell(r, col).border = box
+                r += 1
+            country_now = leg.country or ""
 
             # Row 2: Príchod to_place at arrive_time — expense/per_diem go here
             s2.cell(r, 2).value = arrive_date

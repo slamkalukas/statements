@@ -146,6 +146,7 @@ class TravelLegBase(BaseModel):
     leg_date: date | None = None      # explicit date for this leg (None = same as trip_date)
     depart_time: time | None = None   # when you leave from_place
     arrive_time: time | None = None   # when you arrive at to_place
+    border_time: time | None = None   # state border crossed (overland only)
     distance_km: float | None = None  # manual km override (auto-routing fills this too)
     expense: float | None = None      # reimbursable cost (ticket, taxi receipt, etc.)
     per_diem: float | None = None     # stravné for this leg (None = not set)
@@ -165,6 +166,7 @@ class TravelLegUpdate(BaseModel):
     leg_date: date | None = None
     depart_time: time | None = None
     arrive_time: time | None = None
+    border_time: time | None = None
     distance_km: float | None = None
     expense: float | None = None
     per_diem: float | None = None

@@ -39,6 +39,7 @@ def _leg_out(leg: TravelLeg) -> TravelLegOut:
         leg_date=leg.leg_date,
         depart_time=leg.depart_time,
         arrive_time=leg.arrive_time,
+        border_time=leg.border_time,
         distance_km=float(leg.distance_km) if leg.distance_km is not None else None,
         duration_min=leg.duration_min,
         expense=float(leg.expense) if leg.expense is not None else None,
@@ -360,6 +361,7 @@ def duplicate_travel(
             from_place=leg.from_place, to_place=leg.to_place, transport=leg.transport,
             leg_date=leg.leg_date,
             depart_time=leg.depart_time, arrive_time=leg.arrive_time,
+            border_time=leg.border_time,
             distance_km=leg.distance_km, duration_min=leg.duration_min,
             expense=leg.expense, per_diem=leg.per_diem,
         ))

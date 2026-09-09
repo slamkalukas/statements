@@ -7,6 +7,9 @@ import { SK_MONTHS, formatAmount, getLastVehicleId, rememberVehicleId } from "..
 const TRANSPORTS = ["Auto služobné", "Auto súkromné", "Vlak", "Bus", "Lietadlo", "Taxi", "MHD", "Iné"];
 // Only a car leg has km worth recording — and only a car's km is looked up.
 const CAR_TRANSPORTS = new Set(["Auto služobné", "Auto súkromné"]);
+// You cross a border overland. On a flight the law counts take-off and landing,
+// so arrival already says it and there is nothing to record.
+const BORDER_TRANSPORTS = new Set(["Auto služobné", "Auto súkromné", "Vlak", "Bus"]);
 
 /** Mirrors the backend's is_company_car_transport — a company car goes to the logbook. */
 function isCompanyCarTransport(transport) {
@@ -447,7 +450,7 @@ function emptyLeg(order_idx, fromPlace = "", toPlace = "") {
     from_place: fromPlace, to_place: toPlace,
     transport: "Auto služobné",
     leg_date: "",
-    depart_time: "", arrive_time: "",
+    depart_time: "", arrive_time: "", border_time: "",
     distance_km: "",
     expense: "", per_diem: "",
     order_idx,
@@ -461,7 +464,7 @@ function emptyStay(order_idx, place = "") {
     from_place: place, to_place: place,
     transport: "",
     leg_date: "",
-    depart_time: "", arrive_time: "",
+    depart_time: "", arrive_time: "", border_time: "",
     distance_km: "",
     expense: "", per_diem: "",
     order_idx,
@@ -491,6 +494,7 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
         leg_date: l.leg_date || "",
         depart_time: (l.depart_time || "").slice(0, 5),
         arrive_time: (l.arrive_time || "").slice(0, 5),
+        border_time: (l.border_time || "").slice(0, 5),
         distance_km: l.distance_km != null ? String(l.distance_km) : "",
         expense: l.expense != null ? String(l.expense) : "",
         per_diem: l.per_diem != null ? String(l.per_diem) : "",
@@ -546,12 +550,24 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
     return [...byCode.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [foreignRates]);
 
-  /** Where a stay happens: wherever the last travel leg before it arrived. */
+  /** The country in force just before a leg — what a stay inherits, and what a
+   *  travel leg would be crossing out of. Mirrors the backend's presence walk. */
   function inheritedCountry(idx) {
     for (let i = idx - 1; i >= 0; i--) {
-      if (legs[i].kind !== "stay") return legs[i].country || "";
+      const l = legs[i];
+      if (l.kind === "stay") {
+        if (l.country) return l.country;  // a stay may name its own country
+        continue;                          // otherwise it doesn't move you
+      }
+      return l.country || "";
     }
     return "";
+  }
+
+  /** Overland legs that actually change country are the ones with a border to record. */
+  function crossesBorder(leg, idx) {
+    return BORDER_TRANSPORTS.has(leg.transport)
+      && (leg.country || "") !== inheritedCountry(idx);
   }
 
   function onNameBlur() {
@@ -662,6 +678,7 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
       leg_date: l.leg_date || null,
       depart_time: l.depart_time || null,
       arrive_time: l.arrive_time || null,
+      border_time: l.kind === "stay" ? null : (l.border_time || null),
       distance_km: l.distance_km === "" ? null : Number(l.distance_km),
       expense: l.expense === "" ? null : Number(l.expense),
       per_diem: l.per_diem === "" ? null : Number(l.per_diem),
@@ -818,8 +835,14 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
                       const transport = e.target.value;
                       setLegs((ls) => ls.map((l, i) => (
                         i === idx
-                          // km belongs to a car leg — don't leave one stranded on a flight.
-                          ? { ...l, transport, distance_km: CAR_TRANSPORTS.has(transport) ? l.distance_km : "" }
+                          ? {
+                              ...l,
+                              transport,
+                              // km belongs to a car leg, a border crossing to an
+                              // overland one — don't leave either stranded on a flight.
+                              distance_km: CAR_TRANSPORTS.has(transport) ? l.distance_km : "",
+                              border_time: BORDER_TRANSPORTS.has(transport) ? l.border_time : "",
+                            }
                           : l
                       )));
                     }}
@@ -870,6 +893,19 @@ function TripModal({ period, trip, existing, vehicles, foreignRates, onClose, on
                       onChange={(e) => setLeg(idx, "arrive_time", e.target.value)}
                     />
                   </div>
+                  {crossesBorder(leg, idx) && (
+                    <div style={{ display: "flex", gap: 4, alignItems: "center", flex: "0 0 auto" }}>
+                      <span className="doc-meta" style={{ whiteSpace: "nowrap" }}>
+                        hranica {inheritedCountry(idx) || "SK"}→{leg.country || "SK"}
+                      </span>
+                      <input
+                        type="time" style={{ width: 100 }}
+                        title="When the state border was crossed (prechod štátnej hranice). This is what splits the day between the two countries' stravné."
+                        value={leg.border_time}
+                        onChange={(e) => setLeg(idx, "border_time", e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
                 {/* Expense + per-diem + km row */}
                 <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>

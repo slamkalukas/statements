@@ -183,6 +183,10 @@ class TravelLeg(Base):
     leg_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     depart_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     arrive_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # When the state border was crossed on this leg (prechod štátnej hranice).
+    # Only meaningful travelling overland; for a flight the law counts take-off
+    # and landing, which arrive_time already gives. Blank falls back to arrival.
+    border_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     distance_km: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
     duration_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expense: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
