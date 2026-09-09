@@ -230,6 +230,57 @@ def test_vpc_money_is_written_as_numbers_not_formulas(client, auth_headers):
     assert vpc.cell(spolu + 2, 8).value == 30.10  # DOPLATOK – PREPLATOK
 
 
+def test_arrival_after_midnight_lands_on_the_next_day(client, auth_headers):
+    pid = _period(client, auth_headers, month=11)
+    _trip(client, auth_headers, pid, trip_date="2026-11-05", legs=[
+        {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+         "depart_time": "10:00", "arrive_time": "13:00"},
+        # Drives home late and gets in after midnight.
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "22:00", "arrive_time": "01:00"},
+    ])
+    res = client.get(f"/api/periods/{pid}/travels/export",
+                     params={"name": "Nikoleta"}, headers=auth_headers)
+    vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
+    rows = [(vpc.cell(r, 2).value, vpc.cell(r, 3).value) for r in range(7, 11)]
+    assert rows == [
+        ("5.11.2026", "Odchod Nitra"),
+        ("5.11.2026", "Príchod Wien"),
+        ("5.11.2026", "Odchod Wien"),
+        ("6.11.2026", "Príchod Nitra"),   # past midnight, so the next day
+    ]
+
+
+def test_foreign_night_trip_still_earns_per_diem(client, auth_headers):
+    _set_foreign(client, auth_headers, [{"code": "AT", "name": "Rakusko", "rate": 60}])
+    pid = _period(client, auth_headers, year=2026, month=11)
+    trip = _trip(client, auth_headers, pid, trip_date="2026-11-05", legs=[
+        {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+         "country": "AT", "depart_time": "20:00", "arrive_time": "22:00"},
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "23:00", "arrive_time": "02:00"},
+    ]).json()
+    # Abroad 22:00–24:00 on the 5th (2 h -> 25 %) and 00:00–02:00 on the 6th
+    # (2 h -> 25 %): 15.00 + 15.00.
+    assert trip["per_diem"] == 30.0
+
+
+def test_night_drive_reaches_the_logbook_ending_after_it_started(client, auth_headers):
+    vid = client.post("/api/vehicles", json={"ecv": "NR999XX"}, headers=auth_headers).json()["id"]
+    pid = _period(client, auth_headers, year=2026, month=11)
+    _trip(client, auth_headers, pid, trip_date="2026-11-05", legs=[
+        {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+         "depart_time": "20:00", "arrive_time": "22:00"},
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "23:00", "arrive_time": "02:00"},
+    ])
+    trips = client.get(f"/api/vehicles/{vid}/trips",
+                       params={"year": 2026, "month": 11}, headers=auth_headers).json()
+    assert len(trips) == 1
+    assert trips[0]["start_dt"] == "2026-11-05T20:00:00"
+    assert trips[0]["end_dt"] == "2026-11-06T02:00:00"  # not before it began
+
+
 def test_multiday_trip(client, auth_headers):
     pid = _period(client, auth_headers, month=3)
     res = _trip(client, auth_headers, pid, trip_date="2026-03-01", end_date="2026-03-02", legs=[

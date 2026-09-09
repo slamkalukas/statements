@@ -312,6 +312,27 @@ def leg_effective_date(t: Travel, index: int, leg) -> date:
     return leg.leg_date or t.trip_date
 
 
+def _same_or_next_day(day: date, base: time | None, later: time | None) -> datetime | None:
+    """`later` as a datetime on `day` — or on the day after, when it falls before
+    `base`, which is how a leg that runs past midnight reads."""
+    if later is None:
+        return None
+    when = datetime.combine(day, later)
+    if base is not None and later < base:
+        when += timedelta(days=1)
+    return when
+
+
+def leg_arrival(t: Travel, index: int, leg) -> datetime | None:
+    """When a leg arrives, rolled into the next day if it ran past midnight."""
+    return _same_or_next_day(leg_effective_date(t, index, leg), leg.depart_time, leg.arrive_time)
+
+
+def leg_crossing(t: Travel, index: int, leg) -> datetime | None:
+    """When a leg crossed the border, likewise rolled past midnight."""
+    return _same_or_next_day(leg_effective_date(t, index, leg), leg.depart_time, leg.border_time)
+
+
 def is_foreign_trip(t: Travel) -> bool:
     return any((leg.country or "").strip() for leg in t.legs if leg.kind != "stay")
 
@@ -336,8 +357,8 @@ def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
         return []
 
     start = datetime.combine(leg_effective_date(t, first_i, first), first.depart_time)
-    end = datetime.combine(leg_effective_date(t, last_i, last), last.arrive_time)
-    if end <= start:
+    end = leg_arrival(t, last_i, last)
+    if end is None or end <= start:
         return []
 
     out: list[tuple[datetime, datetime, str]] = []
@@ -353,10 +374,9 @@ def _presence_intervals(t: Travel) -> list[tuple[datetime, datetime, str]]:
         else:
             # Overland you change country at the border, not on arrival — the
             # difference is what splits a day's domestic and foreign hours.
-            crossing = leg.border_time or leg.arrive_time
-            if crossing is None:
+            switch_at = leg_crossing(t, i, leg) or leg_arrival(t, i, leg)
+            if switch_at is None:
                 continue
-            switch_at = datetime.combine(leg_effective_date(t, i, leg), crossing)
 
         switch_at = min(max(switch_at, cursor), end)
         if switch_at > cursor:
@@ -567,7 +587,11 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             else:
                 effective_date = leg.leg_date or t.trip_date
             leg_date = _fmt_date(effective_date)
-            arrive_date = leg_date
+            # A leg that runs past midnight arrives — and may cross — the next day.
+            arrival_dt = leg_arrival(t, i, leg)
+            arrive_date = _fmt_date(arrival_dt.date()) if arrival_dt else leg_date
+            crossing_dt = leg_crossing(t, i, leg)
+            crossing_date = _fmt_date(crossing_dt.date()) if crossing_dt else leg_date
 
             if leg.kind == "stay":
                 # A day spent in one place — a single row, no Odchod/Príchod pair.
@@ -603,7 +627,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             # Between them, when travelling overland: the state border crossing,
             # which is what decides how a day splits between the two countries.
             if leg.border_time is not None:
-                s2.cell(r, 2).value = leg_date
+                s2.cell(r, 2).value = crossing_date
                 s2.cell(r, 3).value = (
                     f"Prechod hranice {country_now or HOME_COUNTRY} → {leg.country or HOME_COUNTRY}"
                 )

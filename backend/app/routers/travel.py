@@ -2,7 +2,7 @@ import io
 import re
 import unicodedata
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import time as dtime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -127,6 +127,8 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
     end_date = travel.end_date or trip_date
     start_dt = datetime.combine(first.leg_date or trip_date, first.depart_time or dtime(8, 0))
     end_dt = datetime.combine(last.leg_date or end_date, last.arrive_time or dtime(18, 0))
+    if end_dt < start_dt:
+        end_dt += timedelta(days=1)  # got back after midnight
 
     existing = db.scalar(select(CarTrip).where(CarTrip.travel_id == travel.id))
     if existing:
