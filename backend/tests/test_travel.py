@@ -165,6 +165,26 @@ def test_export_xlsx(client, auth_headers):
     assert abs(sum(f_vals) - 21.90) < 0.001, f"expected stravné total 21.90, got {f_vals}"
 
 
+def test_meeting_place_is_left_blank_to_fill_in_by_hand(client, auth_headers):
+    pid = _period(client, auth_headers, month=11)
+    _trip(client, auth_headers, pid, legs=[
+        {"from_place": "Nitra", "to_place": "Trnava", "transport": "Auto služobné",
+         "depart_time": "07:00", "arrive_time": "08:00"},
+        {"from_place": "Trnava", "to_place": "Brno", "transport": "Auto služobné",
+         "depart_time": "10:00", "arrive_time": "12:00"},
+        {"from_place": "Brno", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "16:00", "arrive_time": "19:00"},
+    ])
+    res = client.get(f"/api/periods/{pid}/travels/export",
+                     params={"name": "Nikoleta"}, headers=auth_headers)
+    s1 = openpyxl.load_workbook(io.BytesIO(res.content))["November"]
+    assert s1["C6"].value == "Miesto rokovania:"   # the heading stays on the form
+    assert s1["C7"].value is None                 # the trip's own cell is left empty
+    assert s1["C7"].border.left.style == "thin"   # still boxed, so it can be written in
+    # The surrounding columns are still filled.
+    assert "Nitra" in s1["B7"].value and "Nitra" in s1["G7"].value
+
+
 def test_multiday_trip(client, auth_headers):
     pid = _period(client, auth_headers, month=3)
     res = _trip(client, auth_headers, pid, trip_date="2026-03-01", end_date="2026-03-02", legs=[

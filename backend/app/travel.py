@@ -450,14 +450,6 @@ def _home_place(t: Travel) -> str:
     return t.legs[0].from_place if t.legs else ""
 
 
-def _meeting_places(t: Travel) -> str:
-    seen: list[str] = []
-    for leg in t.legs:
-        if leg.to_place and leg.to_place not in seen:
-            seen.append(leg.to_place)
-    return ", ".join(seen)
-
-
 def _write_leg_money(sheet, row: int, leg, trip_pd: float | None, is_last_leg: bool) -> None:
     """Stravné / výdavky / row total for one leg row. Per-leg stravné wins; the
     duration-derived trip total lands on the trip's last row when no leg sets one."""
@@ -511,7 +503,9 @@ def build_xlsx(name: str, address: str, year: int, month: int,
         first_leg = t.legs[0] if t.legs else None
         last_leg = t.legs[-1] if t.legs else None
         s1[f"B{r}"] = f"{_fmt_date(t.trip_date)} {first_leg.from_place if first_leg else ''}, {_fmt_time(first_leg.depart_time if first_leg else None)}".strip(", ")
-        s1[f"C{r}"] = _meeting_places(t)
+        # "Miesto rokovania" is left blank to fill in by hand: on a multi-leg trip
+        # the legs don't say which stop was the one that mattered, and guessing it
+        # (previously: every destination, joined) was more misleading than useful.
         s1[f"E{r}"] = t.purpose
         s1[f"G{r}"] = f"{_fmt_date(end)} {last_leg.to_place if last_leg else ''}, {_fmt_time(last_leg.arrive_time if last_leg else None)}".strip(", ")
         for c in ("B", "C", "E", "G"):
