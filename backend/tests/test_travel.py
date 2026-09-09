@@ -53,6 +53,21 @@ def test_rate_book_resolves_by_date():
     assert book.foreign("XX", date(2026, 7, 1)) == 0.0
 
 
+def _spolu_row(sheet) -> int:
+    """Row of the VPC totals line."""
+    for row in sheet.iter_rows():
+        for c in row:
+            if c.value == "SPOLU":
+                return c.row
+    raise AssertionError("no SPOLU row in the sheet")
+
+
+def _column_values(sheet, column: int, below: int) -> list[float]:
+    """Numeric values in a column above the totals row — the data rows only."""
+    return [c.value for row in sheet.iter_rows() for c in row
+            if c.column == column and c.row < below and isinstance(c.value, (int, float))]
+
+
 def _period(client, auth_headers, year=2026, month=7):
     return client.post("/api/periods", json={"year": year, "month": month}, headers=auth_headers).json()["id"]
 
@@ -156,13 +171,14 @@ def test_export_xlsx(client, auth_headers):
     assert s1["C4"].value == "Nikoleta"
 
     vpc = wb["VPC"]
-    spolu = [c.value for row in vpc.iter_rows() for c in row if c.value == "SPOLU"]
-    assert spolu, "SPOLU row present"
-    # Stravné (column F) are raw floats; SPOLU uses a formula so we sum the raw values.
-    # Each trip's last Príchod row carries its effective per_diem: 8.80 + 13.10 = 21.90
-    f_vals = [c.value for row in vpc.iter_rows() for c in row
-              if c.column == 6 and isinstance(c.value, (int, float))]
+    spolu_row = _spolu_row(vpc)
+    # Each trip's last Príchod row carries its effective per_diem: 8.80 + 13.10.
+    f_vals = _column_values(vpc, 6, below=spolu_row)
     assert abs(sum(f_vals) - 21.90) < 0.001, f"expected stravné total 21.90, got {f_vals}"
+    # The totals are written as numbers, so they read correctly without the
+    # spreadsheet having to recalculate anything.
+    assert vpc.cell(spolu_row, 6).value == 21.90
+    assert vpc.cell(spolu_row, 8).value == 21.90
 
 
 def test_meeting_place_is_left_blank_to_fill_in_by_hand(client, auth_headers):
@@ -183,6 +199,35 @@ def test_meeting_place_is_left_blank_to_fill_in_by_hand(client, auth_headers):
     assert s1["C7"].border.left.style == "thin"   # still boxed, so it can be written in
     # The surrounding columns are still filled.
     assert "Nitra" in s1["B7"].value and "Nitra" in s1["G7"].value
+
+
+def test_vpc_money_is_written_as_numbers_not_formulas(client, auth_headers):
+    """A formula carries no result until the reader recalculates, so the sheet
+    showed blank totals in anything that doesn't. Every amount is a number."""
+    pid = _period(client, auth_headers, month=11)
+    _trip(client, auth_headers, pid, legs=[
+        {"from_place": "Nitra", "to_place": "Wien", "transport": "Auto služobné",
+         "depart_time": "07:00", "arrive_time": "09:00", "expense": 12.5},
+        {"from_place": "Wien", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "18:00", "arrive_time": "20:00", "expense": 4.5},
+    ])
+    res = client.get(f"/api/periods/{pid}/travels/export",
+                     params={"name": "Nikoleta"}, headers=auth_headers)
+    vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
+
+    formulas = [f"{c.coordinate}={c.value}" for row in vpc.iter_rows() for c in row
+                if isinstance(c.value, str) and c.value.startswith("=")]
+    assert formulas == [], f"formulas left in the sheet: {formulas}"
+
+    spolu = _spolu_row(vpc)
+    # 13h -> band2 13.10 stravné, expenses 12.50 + 4.50.
+    assert vpc.cell(spolu, 6).value == 13.10   # Stravné
+    assert vpc.cell(spolu, 7).value == 17.00   # Výdavky
+    assert vpc.cell(spolu, 8).value == 30.10   # Spolu
+    # The row totals add up to it, and the balance owed follows.
+    assert sum(_column_values(vpc, 8, below=spolu)) == 30.10
+    assert vpc.cell(spolu + 1, 8).value == 0.0    # PREDDAVOK
+    assert vpc.cell(spolu + 2, 8).value == 30.10  # DOPLATOK – PREPLATOK
 
 
 def test_multiday_trip(client, auth_headers):
@@ -575,9 +620,9 @@ def test_foreign_per_diem_reaches_the_xlsx(client, auth_headers):
                      params={"name": "Nikoleta"}, headers=auth_headers)
     assert res.status_code == 200, res.text
     vpc = openpyxl.load_workbook(io.BytesIO(res.content))["VPC"]
-    amounts = [c.value for row in vpc.iter_rows() for c in row
-               if c.column == 6 and isinstance(c.value, (int, float))]
-    assert amounts == [135.0]
+    spolu_row = _spolu_row(vpc)
+    assert _column_values(vpc, 6, below=spolu_row) == [135.0]
+    assert vpc.cell(spolu_row, 6).value == 135.0
 
 
 def test_duplicate_trip(client, auth_headers):

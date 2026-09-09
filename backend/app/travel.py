@@ -458,22 +458,32 @@ def _home_place(t: Travel) -> str:
     return t.legs[0].from_place if t.legs else ""
 
 
-def _write_leg_money(sheet, row: int, leg, trip_pd: float | None, is_last_leg: bool) -> None:
-    """Stravné / výdavky / row total for one leg row. Per-leg stravné wins; the
-    duration-derived trip total lands on the trip's last row when no leg sets one."""
+def _write_leg_money(sheet, row: int, leg, trip_pd: float | None,
+                     is_last_leg: bool) -> tuple[float, float]:
+    """Stravné / výdavky / row total for one leg row, returning both amounts so
+    the caller can total the columns. Per-leg stravné wins; the duration-derived
+    trip total lands on the trip's last row when no leg sets one.
+
+    Amounts are written as numbers, not formulas. A formula carries no result
+    until the reader recalculates, and the exported sheet is a record that has
+    to show its figures in whatever the accountant opens it with.
+    """
     pd_value = None
     if leg.per_diem is not None:
         pd_value = float(leg.per_diem)
     elif is_last_leg and trip_pd is not None:
         pd_value = trip_pd
+    expense = float(leg.expense) if leg.expense is not None else None
+
     if pd_value is not None:
         sheet.cell(row, 6).value = pd_value
         sheet.cell(row, 6).number_format = "0.00"
-    if leg.expense is not None:
-        sheet.cell(row, 7).value = float(leg.expense)
+    if expense is not None:
+        sheet.cell(row, 7).value = expense
         sheet.cell(row, 7).number_format = "0.00"
-    sheet.cell(row, 8).value = f"=SUM(F{row}:G{row})"
+    sheet.cell(row, 8).value = round((pd_value or 0.0) + (expense or 0.0), 2)
     sheet.cell(row, 8).number_format = "0.00"
+    return pd_value or 0.0, expense or 0.0
 
 
 def build_xlsx(name: str, address: str, year: int, month: int,
@@ -539,6 +549,7 @@ def build_xlsx(name: str, address: str, year: int, month: int,
 
     data_start = 7
     r = data_start
+    sum_per_diem = sum_expense = 0.0
 
     for t in travels:
         end = t.end_date or t.trip_date
@@ -570,7 +581,9 @@ def build_xlsx(name: str, address: str, year: int, month: int,
                     s2.cell(r, 4).value = (
                         f"{_fmt_time(leg.depart_time)}–{_fmt_time(leg.arrive_time)}".strip("–")
                     )
-                _write_leg_money(s2, r, leg, trip_pd, is_last_leg)
+                pd_amount, exp_amount = _write_leg_money(s2, r, leg, trip_pd, is_last_leg)
+                sum_per_diem += pd_amount
+                sum_expense += exp_amount
                 for col in range(2, 9):
                     s2.cell(r, col).border = box
                 r += 1
@@ -605,7 +618,9 @@ def build_xlsx(name: str, address: str, year: int, month: int,
             arrival = f"Príchod {leg.to_place}".strip()
             s2.cell(r, 3).value = f"{arrival} — {leg.note}" if leg.note else arrival
             s2.cell(r, 4).value = _fmt_time(leg.arrive_time)
-            _write_leg_money(s2, r, leg, trip_pd, is_last_leg)
+            pd_amount, exp_amount = _write_leg_money(s2, r, leg, trip_pd, is_last_leg)
+            sum_per_diem += pd_amount
+            sum_expense += exp_amount
             for col in range(2, 9):
                 s2.cell(r, col).border = box
             r += 1
@@ -613,26 +628,27 @@ def build_xlsx(name: str, address: str, year: int, month: int,
         if len(travels) > 1 and t is not travels[-1]:
             r += 1  # blank row between trips
 
-    last_data_row = r - 1
     r += 1  # blank row before totals
 
-    spolu_row = r
+    total = round(sum_per_diem + sum_expense, 2)
     s2.cell(r, 2).value = "SPOLU"; s2.cell(r, 2).font = bold
-    s2.cell(r, 6).value = f"=SUM(F{data_start}:F{last_data_row})"
+    s2.cell(r, 6).value = round(sum_per_diem, 2)
     s2.cell(r, 6).number_format = "0.00"; s2.cell(r, 6).font = bold
-    s2.cell(r, 7).value = f"=SUM(G{data_start}:G{last_data_row})"
+    s2.cell(r, 7).value = round(sum_expense, 2)
     s2.cell(r, 7).number_format = "0.00"; s2.cell(r, 7).font = bold
-    s2.cell(r, 8).value = f"=SUM(H{data_start}:H{last_data_row})"
+    s2.cell(r, 8).value = total
     s2.cell(r, 8).number_format = "0.00"; s2.cell(r, 8).font = bold
 
+    # An advance is filled in by hand, so the balance below assumes none.
+    preddavok = 0.0
     preddavok_row = r + 1
     s2.cell(preddavok_row, 2).value = "PREDDAVOK"
-    s2.cell(preddavok_row, 8).value = 0.0
+    s2.cell(preddavok_row, 8).value = preddavok
     s2.cell(preddavok_row, 8).number_format = "0.00"
 
     doplatok_row = r + 2
     s2.cell(doplatok_row, 2).value = "DOPLATOK – PREPLATOK"; s2.cell(doplatok_row, 2).font = bold
-    s2.cell(doplatok_row, 8).value = f"=H{spolu_row}-H{preddavok_row}"
+    s2.cell(doplatok_row, 8).value = round(total - preddavok, 2)
     s2.cell(doplatok_row, 8).number_format = "0.00"; s2.cell(doplatok_row, 8).font = bold
 
     for col, w in {"B": 14, "C": 28, "D": 9, "E": 28, "F": 10, "G": 10, "H": 10}.items():
