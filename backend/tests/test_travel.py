@@ -281,6 +281,27 @@ def test_night_drive_reaches_the_logbook_ending_after_it_started(client, auth_he
     assert trips[0]["end_dt"] == "2026-11-06T02:00:00"  # not before it began
 
 
+def test_logbook_dates_a_multiday_trip_by_its_end_date(client, auth_headers):
+    """A stale leg_date on the last leg used to put the whole journey on the
+    departure day — a 4-day drive logged as finishing the evening it left."""
+    vid = client.post("/api/vehicles", json={"ecv": "NR111AA"}, headers=auth_headers).json()["id"]
+    pid = _period(client, auth_headers, year=2026, month=4)
+    _trip(client, auth_headers, pid, trip_date="2026-04-30", end_date="2026-05-03", legs=[
+        {"from_place": "Nitra", "to_place": "Praha", "transport": "Auto služobné",
+         "leg_date": "2026-04-30", "depart_time": "09:30", "arrive_time": "15:00",
+         "distance_km": 426},
+        {"from_place": "Praha", "to_place": "Nitra", "transport": "Auto služobné",
+         "leg_date": "2026-04-30", "depart_time": "15:00", "arrive_time": "21:00",
+         "distance_km": 426},
+    ])
+    trips = client.get(f"/api/vehicles/{vid}/trips",
+                       params={"year": 2026, "month": 4}, headers=auth_headers).json()
+    assert len(trips) == 1
+    assert trips[0]["start_dt"] == "2026-04-30T09:30:00"
+    assert trips[0]["end_dt"] == "2026-05-03T21:00:00"
+    assert trips[0]["km"] == 852
+
+
 def test_multiday_trip(client, auth_headers):
     pid = _period(client, auth_headers, month=3)
     res = _trip(client, auth_headers, pid, trip_date="2026-03-01", end_date="2026-03-02", legs=[

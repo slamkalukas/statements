@@ -121,12 +121,20 @@ def _sync_logbook(db: Session, travel: Travel) -> None:
         else None
     )
 
-    # Datetimes from first/last company-car leg
+    # Datetimes from first/last company-car leg, dated the same way the per-diem
+    # and the exported report date them. Resolving it here instead meant a stale
+    # leg_date on a last leg — which the UI offers no way to edit — put the whole
+    # journey on the departure day.
     first, last = car_legs[0], car_legs[-1]
-    trip_date = travel.trip_date
-    end_date = travel.end_date or trip_date
-    start_dt = datetime.combine(first.leg_date or trip_date, first.depart_time or dtime(8, 0))
-    end_dt = datetime.combine(last.leg_date or end_date, last.arrive_time or dtime(18, 0))
+    legs = list(travel.legs)
+    start_dt = datetime.combine(
+        travel_module.leg_effective_date(travel, legs.index(first), first),
+        first.depart_time or dtime(8, 0),
+    )
+    end_dt = datetime.combine(
+        travel_module.leg_effective_date(travel, legs.index(last), last),
+        last.arrive_time or dtime(18, 0),
+    )
     if end_dt < start_dt:
         end_dt += timedelta(days=1)  # got back after midnight
 
