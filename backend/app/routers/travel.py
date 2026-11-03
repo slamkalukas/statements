@@ -410,6 +410,9 @@ def update_travel(
         assert_period_open(new_period)
         t.period_id = new_period.id
 
+    # The traveller name, purpose, dates and vehicle all live on the linked
+    # drive too — without this a rename reached the report but not the logbook.
+    _sync_logbook(db, t)
     audit.record(db, user, "update", "travel", t.id, f"{t.traveller_name} {t.trip_date}")
     db.commit()
     db.refresh(t)

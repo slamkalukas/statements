@@ -805,3 +805,53 @@ def test_export_year_bundles_every_person_and_month(client, auth_headers):
 def test_export_year_404_when_no_periods(client, auth_headers):
     res = client.get("/api/travels/export-year", params={"year": 1999}, headers=auth_headers)
     assert res.status_code == 404
+
+
+def test_editing_a_travel_reaches_its_logbook_drive(client, auth_headers):
+    """A rename used to update the report and leave the drive showing the old
+    driver — update_travel never re-synced the logbook."""
+    vid = client.post("/api/vehicles", json={"ecv": "NR123AB"}, headers=auth_headers).json()["id"]
+    pid = _period(client, auth_headers, year=2026, month=11)
+    trip = _trip(client, auth_headers, pid, trip_date="2026-11-10", legs=[
+        {"from_place": "Nitra", "to_place": "Prievidza", "transport": "Auto služobné",
+         "depart_time": "08:00", "arrive_time": "09:30", "distance_km": 87},
+        {"from_place": "Prievidza", "to_place": "Nitra", "transport": "Auto služobné",
+         "depart_time": "16:00", "arrive_time": "17:30", "distance_km": 87},
+    ]).json()
+
+    def drive(month=11):
+        rows = client.get(f"/api/vehicles/{vid}/trips",
+                          params={"year": 2026, "month": month}, headers=auth_headers).json()
+        return rows[0] if rows else None
+
+    assert drive()["driver_name"] == "Nikoleta"  # the helper default
+
+    r = client.patch(f"/api/travels/{trip['id']}",
+                     json={"traveller_name": "Nikoleta Slamková", "purpose": "Opravene"},
+                     headers=auth_headers)
+    assert r.status_code == 200
+    assert drive()["driver_name"] == "Nikoleta Slamková"
+    assert drive()["purpose"] == "Opravene"
+
+
+def test_moving_a_travel_to_another_month_moves_its_drive(client, auth_headers):
+    vid = client.post("/api/vehicles", json={"ecv": "NR456CD"}, headers=auth_headers).json()["id"]
+    nov = _period(client, auth_headers, year=2026, month=11)
+    _period(client, auth_headers, year=2026, month=12)
+    trip = _trip(client, auth_headers, nov, trip_date="2026-11-10", legs=[
+        {"from_place": "Nitra", "to_place": "Prievidza", "transport": "Auto služobné",
+         "depart_time": "08:00", "arrive_time": "09:30", "distance_km": 87},
+    ]).json()
+
+    r = client.patch(f"/api/travels/{trip['id']}", json={"trip_date": "2026-12-03"},
+                     headers=auth_headers)
+    assert r.status_code == 200
+
+    def rows(month):
+        return client.get(f"/api/vehicles/{vid}/trips",
+                          params={"year": 2026, "month": month}, headers=auth_headers).json()
+
+    assert rows(11) == []
+    assert len(rows(12)) == 1
+    assert rows(12)[0]["start_dt"] == "2026-12-03T08:00:00"
+    assert rows(12)[0]["journey_number"] == 202612001  # renumbered into December
