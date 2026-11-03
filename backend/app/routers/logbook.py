@@ -15,6 +15,7 @@ from .. import logbook as lb
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import CarTrip, Vehicle
+from ..routing import geocode_osm as _geocode
 from ..schemas import (
     CarTripCreate, CarTripOut, CarTripUpdate,
     VehicleCreate, VehicleOut, VehicleUpdate,
@@ -29,25 +30,6 @@ _OSRM = "http://router.project-osrm.org/route/v1/driving"
 def _parse_waypoints(route: str) -> list[str]:
     parts = re.split(r"\s*[>→]\s*|\s+-\s+", route.strip())
     return [p.strip() for p in parts if p.strip()]
-
-
-@lru_cache(maxsize=512)
-def _geocode(city: str) -> tuple[float, float] | None:
-    """City coordinates rarely change, and the same waypoints get re-typed
-    across trips — cache to stay within Nominatim's ~1 req/sec usage policy."""
-    try:
-        r = httpx.get(
-            _NOMINATIM,
-            params={"q": city, "format": "json", "limit": 1},
-            headers={"User-Agent": "statements-app/1.0"},
-            timeout=5.0,
-        )
-        data = r.json()
-        if data:
-            return float(data[0]["lon"]), float(data[0]["lat"])
-    except Exception:
-        pass
-    return None
 
 
 def _driving_km(coords: list[tuple[float, float]]) -> float:

@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 ORS_KEY = "ors_api_key"
 _BASE = "https://api.openrouteservice.org"
+_NOMINATIM = "https://nominatim.openstreetmap.org/search"
 
 
 def get_api_key(db) -> str | None:
@@ -36,8 +37,30 @@ def _round20(minutes: float) -> int:
     return round(minutes / 20) * 20
 
 
-def _geocode(place: str, api_key: str) -> tuple[float, float] | None:
-    """Return (lng, lat) for the first geocode result, or None."""
+@lru_cache(maxsize=512)
+def geocode_osm(place: str) -> tuple[float, float] | None:
+    """Return (lng, lat) from OpenStreetMap, or None.
+
+    Coordinates rarely change and the same places get re-typed across trips —
+    cache to stay within Nominatim's ~1 req/sec usage policy.
+    """
+    try:
+        r = httpx.get(
+            _NOMINATIM,
+            params={"q": place, "format": "json", "limit": 1},
+            headers={"User-Agent": "statements-app/1.0"},
+            timeout=5.0,
+        )
+        data = r.json()
+        if data:
+            return (float(data[0]["lon"]), float(data[0]["lat"]))
+    except Exception as exc:
+        logger.warning("OSM geocode error for %r: %s", place, exc)
+    return None
+
+
+def _geocode_ors(place: str, api_key: str) -> tuple[float, float] | None:
+    """Return (lng, lat) for the first ORS geocode result, or None."""
     try:
         r = httpx.get(
             f"{_BASE}/geocode/search",
@@ -54,6 +77,18 @@ def _geocode(place: str, api_key: str) -> tuple[float, float] | None:
     except Exception as exc:
         logger.warning("ORS geocode error for %r: %s", place, exc)
         return None
+
+
+def _geocode(place: str, api_key: str) -> tuple[float, float] | None:
+    """OSM first, ORS as fallback.
+
+    ORS always answers with its best guess, which silently wrote a wrong
+    distance onto the leg: it put a Nitra street address 29 km away. OSM
+    returns nothing rather than guessing, so the field stays empty for the
+    user to fill. ORS still covers the names OSM has no entry for, such as
+    company names and the "Firm (street, city)" form.
+    """
+    return geocode_osm(place) or _geocode_ors(place, api_key)
 
 
 def route(from_place: str, to_place: str, api_key: str) -> tuple[float, int] | None:
