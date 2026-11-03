@@ -383,3 +383,30 @@ class DashboardSummary(BaseModel):
     total_travels: int = 0     # travel trips across all months
     total_car_trips: int = 0   # logbook drives (with km) across all months
     recent_periods: list[PeriodOut]
+
+
+# ---- Monthly tasks ----
+class PeriodTaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    period_id: int
+    title: str
+    note: str
+    done: bool
+    order_idx: int
+
+
+class PeriodTaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=500)
+    done: bool | None = None
+
+
+class PeriodTaskCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    note: str = Field(default="", max_length=500)
+
+
+class MonthlyTaskTemplate(BaseModel):
+    """The titles that recur every month, in display order."""
+    titles: list[str] = Field(default_factory=list, max_length=100)

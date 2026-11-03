@@ -9,9 +9,11 @@ import {
   FileText,
   FolderSync,
   Link2,
+  ListChecks,
   Lock,
   LockOpen,
   Pencil,
+  Plus,
   ScanSearch,
   Trash2,
   Undo2,
@@ -30,19 +32,22 @@ export default function PeriodDetail() {
   const [period, setPeriod] = useState(null);
   const [lines, setLines] = useState(null);
   const [docs, setDocs] = useState(null);
+  const [tasks, setTasks] = useState(null);
   const [toast, setToast] = useState("");
   const [attachLine, setAttachLine] = useState(null);
   const [moveLine, setMoveLine] = useState(null);
 
   async function load() {
-    const [periods, ls, ds] = await Promise.all([
+    const [periods, ls, ds, ts] = await Promise.all([
       api.get("/periods"),
       api.get(`/periods/${id}/lines`),
       api.get(`/periods/${id}/documents`),
+      api.get(`/periods/${id}/tasks`),
     ]);
     setPeriod(periods.find((p) => String(p.id) === String(id)) || null);
     setLines(ls);
     setDocs(ds);
+    setTasks(ts);
   }
   useEffect(() => {
     load();
@@ -167,6 +172,14 @@ export default function PeriodDetail() {
         </div>
       )}
 
+      <MonthlyTasks
+        periodId={period.id}
+        tasks={tasks}
+        closed={closed}
+        onChanged={setTasks}
+        onError={(m) => flash(m)}
+      />
+
       {/* ---- Reconciliation: the primary view ---- */}
       <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div className="card-head" style={{ marginBottom: 14 }}>
@@ -281,6 +294,135 @@ export default function PeriodDetail() {
 
       <Toast message={toast} />
     </>
+  );
+}
+
+function MonthlyTasks({ periodId, tasks, closed, onChanged, onError }) {
+  const [adding, setAdding] = useState(null);  // null = the plus button is collapsed
+  if (!tasks) return null;
+
+  const done = tasks.filter((t) => t.done).length;
+
+  async function patch(task, body) {
+    try {
+      const saved = await api.patch(`/period-tasks/${task.id}`, body);
+      onChanged(tasks.map((t) => (t.id === task.id ? saved : t)));
+    } catch (err) {
+      onError("Could not save the task: " + err.message);
+    }
+  }
+
+  async function add(e) {
+    e.preventDefault();
+    if (!adding?.trim()) return;
+    try {
+      const created = await api.post(`/periods/${periodId}/tasks`, { title: adding.trim() });
+      onChanged([...tasks, created]);
+      setAdding(null);
+    } catch (err) {
+      onError("Could not add the task: " + err.message);
+    }
+  }
+
+  async function remove(task) {
+    try {
+      await api.del(`/period-tasks/${task.id}`);
+      onChanged(tasks.filter((t) => t.id !== task.id));
+    } catch (err) {
+      onError("Could not remove the task: " + err.message);
+    }
+  }
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 16 }}>
+      <div className="card-head" style={{ marginBottom: 14 }}>
+        <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <ListChecks size={18} /> Monthly tasks
+        </h3>
+        {tasks.length > 0 && (
+          <span className={done === tasks.length ? "tag shared" : "tag warn"}>
+            {done === tasks.length ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+            {done} / {tasks.length} done
+          </span>
+        )}
+      </div>
+
+      {tasks.length === 0 ? (
+        <p className="doc-meta">
+          No monthly tasks. Add the recurring ones in Settings and they appear here from the
+          next month you open.
+        </p>
+      ) : (
+        <div className="stack" style={{ gap: 8 }}>
+          {tasks.map((task) => (
+            <div key={task.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto", flexShrink: 0 }}
+                checked={task.done}
+                disabled={closed}
+                onChange={(e) => patch(task, { done: e.target.checked })}
+              />
+              <span
+                style={{
+                  flex: "0 0 220px",
+                  textDecoration: task.done ? "line-through" : "none",
+                  opacity: task.done ? 0.6 : 1,
+                }}
+              >
+                {task.title}
+              </span>
+              <input
+                style={{ flex: 1 }}
+                placeholder="Note (optional)"
+                defaultValue={task.note}
+                disabled={closed}
+                // on blur, not on every keystroke: one request per edit
+                onBlur={(e) => {
+                  if (e.target.value !== task.note) patch(task, { note: e.target.value });
+                }}
+              />
+              {!closed && (
+                <button
+                  type="button" className="btn btn-ghost btn-sm" title="Remove from this month"
+                  style={{ flex: "0 0 32px" }}
+                  onClick={() => remove(task)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!closed && (adding === null ? (
+        <button
+          type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 12 }}
+          title="Add a task to this month only"
+          onClick={() => setAdding("")}
+        >
+          <Plus size={14} />
+        </button>
+      ) : (
+        <form onSubmit={add} style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <input
+            autoFocus
+            style={{ flex: 1, maxWidth: 320 }}
+            placeholder="One-off task for this month…"
+            value={adding}
+            onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setAdding(null)}
+          />
+          <button className="btn btn-ghost btn-sm" type="submit" disabled={!adding.trim()}>
+            Add
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAdding(null)}>
+            Cancel
+          </button>
+        </form>
+      ))}
+    </div>
   );
 }
 

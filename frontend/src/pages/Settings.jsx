@@ -1,4 +1,4 @@
-import { FolderOpen, Globe, HardDrive, MapPin, Plane, Plus, Save, Trash2 } from "lucide-react";
+import { FolderOpen, Globe, HardDrive, ListChecks, MapPin, Plane, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Spinner, Toast } from "../components/UI";
@@ -22,6 +22,9 @@ export default function Settings() {
   const [foreignRates, setForeignRates] = useState(null);
   const [savingForeign, setSavingForeign] = useState(false);
 
+  const [taskTitles, setTaskTitles] = useState(null);
+  const [savingTasks, setSavingTasks] = useState(false);
+
   const [orsConfigured, setOrsConfigured] = useState(null);
   const [orsKey, setOrsKey] = useState("");
   const [savingOrs, setSavingOrs] = useState(false);
@@ -35,6 +38,7 @@ export default function Settings() {
     api.get("/travel/foreign-per-diem-rates")
       .then((r) => setForeignRates(r.rates))
       .catch(() => setForeignRates([]));
+    api.get("/monthly-tasks").then((r) => setTaskTitles(r.titles)).catch(() => setTaskTitles([]));
     api.get("/travel/routing-key").then((r) => setOrsConfigured(r.configured)).catch(() => {});
   }, []);
 
@@ -84,6 +88,22 @@ export default function Settings() {
     ...rates,
     rates: rates.rates.map((r, j) => (j === i ? { ...r, [key]: value } : r)),
   });
+
+  async function saveTasks(e) {
+    e.preventDefault();
+    setSavingTasks(true);
+    try {
+      const saved = await api.patch("/monthly-tasks", { titles: taskTitles });
+      setTaskTitles(saved.titles);
+      setToast("Monthly tasks saved");
+      setTimeout(() => setToast(""), 2200);
+    } catch (err) {
+      setToast("Failed to save: " + err.message);
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setSavingTasks(false);
+    }
+  }
 
   async function saveForeignRates(e) {
     e.preventDefault();
@@ -381,6 +401,56 @@ export default function Settings() {
               row for the same country with the date the new rate takes effect — earlier
               trips keep reporting the rate that applied when they happened.
             </p>
+          </form>
+        ) : (
+          <Spinner />
+        )}
+      </div>
+
+      <div className="card card-pad" style={{ maxWidth: 620, marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+          <ListChecks size={18} /> Monthly tasks
+        </h3>
+        <p className="page-sub" style={{ marginBottom: 16 }}>
+          The jobs that come round every month. Each month gets its own copy of this list
+          the first time you open it, so ticking one off is per month — and changing the
+          list here leaves months you have already worked on as they were.
+        </p>
+        {taskTitles ? (
+          <form onSubmit={saveTasks} className="stack" style={{ gap: 8 }}>
+            {taskTitles.length === 0 && (
+              <p className="doc-meta">No tasks yet — add the first one below.</p>
+            )}
+            {taskTitles.map((title, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  style={{ flex: 1 }}
+                  value={title}
+                  placeholder="e.g. Podať DPH priznanie"
+                  onChange={(e) =>
+                    setTaskTitles(taskTitles.map((t, j) => (j === i ? e.target.value : t)))}
+                />
+                <button
+                  type="button" className="btn btn-ghost btn-sm" title="Remove"
+                  style={{ flex: "0 0 32px" }}
+                  onClick={() => setTaskTitles(taskTitles.filter((_, j) => j !== i))}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button
+                type="button" className="btn btn-ghost btn-sm"
+                onClick={() => setTaskTitles([...taskTitles, ""])}
+              >
+                <Plus size={14} /> Add task
+              </button>
+              <button className="btn btn-secondary" type="submit" disabled={savingTasks}
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {savingTasks ? <Spinner /> : <Save size={14} />} Save tasks
+              </button>
+            </div>
           </form>
         ) : (
           <Spinner />

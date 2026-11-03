@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     Time,
     UniqueConstraint,
     false,
@@ -58,6 +59,10 @@ class Period(Base):
     )
     lines: Mapped[list["StatementLine"]] = relationship(
         back_populates="period", cascade="all, delete-orphan"
+    )
+    tasks: Mapped[list["PeriodTask"]] = relationship(
+        back_populates="period", cascade="all, delete-orphan",
+        order_by="PeriodTask.order_idx",
     )
 
 
@@ -244,6 +249,28 @@ class CarTrip(Base):
     vehicle: Mapped["Vehicle"] = relationship(back_populates="trips")
 
 
+class PeriodTask(Base):
+    """One recurring to-do inside a month (file VAT, pay salaries...).
+
+    Titles are copied from the template in `settings` the first time a month
+    shows its list, so editing the template later leaves a month already
+    filed exactly as it was."""
+
+    __tablename__ = "period_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    period_id: Mapped[int] = mapped_column(
+        ForeignKey("periods.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    note: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    order_idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    period: Mapped["Period"] = relationship(back_populates="tasks")
+
+
 class Setting(Base):
     """Persistent key-value configuration that can be changed from the UI without
     restarting the container. Env vars provide initial defaults; a saved Setting
@@ -253,7 +280,8 @@ class Setting(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
-    value: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    # Text, not String: the JSON blobs (per-diem tables, monthly task template) outgrow 512 chars.
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 

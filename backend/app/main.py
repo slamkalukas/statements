@@ -10,7 +10,9 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from . import auth, storage
 from .database import Base, SessionLocal, engine
 from .routers import auth as auth_router
-from .routers import dashboard, documents, files, logbook, periods, reconcile, settings, travel
+from .routers import (
+    dashboard, documents, files, logbook, periods, reconcile, settings, tasks, travel,
+)
 from .seed import seed
 
 logging.basicConfig(
@@ -97,3 +99,4 @@ app.include_router(settings.router)
 app.include_router(files.router)
 app.include_router(travel.router)
 app.include_router(logbook.router)
+app.include_router(tasks.router)
