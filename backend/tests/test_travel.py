@@ -17,10 +17,12 @@ def test_per_diem_bands():
     assert tv.computed_per_diem(D, None, time(9, 0), time(13, 0), R) == Decimal("0.00")    # 4h
     assert tv.computed_per_diem(D, None, time(7, 30), time(15, 30), R) == Decimal("8.80")  # 8h
     assert tv.computed_per_diem(D, None, time(7, 30), time(20, 30), R) == Decimal("13.10") # 13h
-    assert tv.computed_per_diem(D, None, time(7, 0), time(6, 0), R) == Decimal("19.50")    # 23h overnight
+    assert tv.computed_per_diem(D, None, time(7, 0), time(6, 0), R) == Decimal("21.90")    # 17h + 6h over midnight
     assert tv.computed_per_diem(D, None, None, None, R) == Decimal("0.00")
-    # Multi-day: 1 Jul 08:00 -> 2 Jul 18:00 = 34h => 1 full day (19.50) + 10h (8.80).
-    assert tv.computed_per_diem(D, date(2026, 7, 2), time(8, 0), time(18, 0), R) == Decimal("28.30")
+    # Per calendar day: 1 Jul 08:00-24:00 = 16h (13.10) + 2 Jul 00:00-18:00 = 18h (13.10).
+    assert tv.computed_per_diem(D, date(2026, 7, 2), time(8, 0), time(18, 0), R) == Decimal("26.20")
+    # 16 Jun 08:00 -> 18 Jun 14:00: 16h + 24h + 14h = 13.10 + 19.50 + 13.10.
+    assert tv.computed_per_diem(date(2026, 6, 16), date(2026, 6, 18), time(8, 0), time(14, 0), R) == Decimal("45.70")
 
 
 def test_foreign_day_fraction_bands():
@@ -312,7 +314,7 @@ def test_multiday_trip(client, auth_headers):
     ])
     body = res.json()
     assert body["end_date"] == "2026-03-02"
-    assert body["per_diem"] == 28.3  # 34h -> 19.50 + 8.80
+    assert body["per_diem"] == 26.2  # 16h + 18h -> 13.10 + 13.10
 
 
 def test_leg_place_accepts_long_full_address(client, auth_headers):

@@ -255,15 +255,20 @@ def _band_amount(hours: float, rates: dict) -> float:
 def computed_per_diem(date_from: date, date_to: date | None,
                       first_depart: time | None, last_arrive: time | None,
                       rates: dict) -> Decimal:
-    """Per-diem from trip duration using the configured bands. For multi-day trips
-    each full 24h counts as a whole-day allowance (band3) plus the remainder by band."""
+    """Per-diem from trip duration using the configured bands, per calendar day
+    (zákon 283/2002 §5): each day's hours on the trip are banded on their own."""
     h = duration_hours(date_from, date_to, first_depart, last_arrive)
     if h is None:
         return Decimal("0.00")
-    full_days = int(h // 24)
-    remainder = h - full_days * 24
-    amount = full_days * rates["band3"] + _band_amount(remainder, rates)
-    return Decimal(str(amount)).quantize(Decimal("0.01"))
+    start = datetime.combine(date_from, first_depart)
+    end = start + timedelta(hours=h)
+    amount = 0.0
+    day = start
+    while day < end:
+        next_midnight = datetime.combine(day.date() + timedelta(days=1), time(0, 0))
+        amount += _band_amount((min(end, next_midnight) - day).total_seconds() / 3600, rates)
+        day = next_midnight
+    return Decimal(str(round(amount, 2))).quantize(Decimal("0.01"))
 
 
 def _leg_times(t: Travel) -> tuple[time | None, time | None]:
